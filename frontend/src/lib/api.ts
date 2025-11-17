@@ -3,8 +3,12 @@
 // Old hardcoded approach (replaced for Railway deployment):
 // const API_BASE_URL = 'http://localhost:3000';
 // const WS_URL = 'ws://localhost:3000';
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3000');
-const WS_URL = import.meta.env.VITE_WS_URL || (import.meta.env.PROD ? `wss://${window.location.host}` : 'ws://localhost:3000');
+
+// Check if we're in development by looking at the hostname
+const isDevelopment = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || (isDevelopment ? 'http://localhost:3000' : '');
+const WS_URL = import.meta.env.VITE_WS_URL || (isDevelopment ? 'ws://localhost:3000' : `wss://${typeof window !== 'undefined' ? window.location.host : ''}`);
 
 export const api = {
   async getHealth() {
