@@ -92,43 +92,59 @@ export class WSClient {
   private ws: WebSocket | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 3;
 
   connect() {
     if (this.ws?.readyState === WebSocket.OPEN) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('WebSocket: Max reconnection attempts reached. Running in polling mode.');
+      return;
+    }
 
-    this.ws = new WebSocket(WS_URL);
+    try {
+      this.ws = new WebSocket(WS_URL);
 
-    this.ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
+      this.ws.onopen = () => {
+        console.log('✅ WebSocket connected');
+        this.reconnectAttempts = 0; // Reset on successful connection
+      };
 
-    this.ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const type = data.type;
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const type = data.type;
 
-        const listeners = this.listeners.get(type);
-        if (listeners) {
-          listeners.forEach(listener => listener(data));
+          const listeners = this.listeners.get(type);
+          if (listeners) {
+            listeners.forEach(listener => listener(data));
+          }
+
+          const allListeners = this.listeners.get('*');
+          if (allListeners) {
+            allListeners.forEach(listener => listener(data));
+          }
+        } catch (error) {
+          console.error('WebSocket message parse error:', error);
         }
+      };
 
-        const allListeners = this.listeners.get('*');
-        if (allListeners) {
-          allListeners.forEach(listener => listener(data));
+      this.ws.onerror = (error) => {
+        console.warn('⚠️ WebSocket error (app will use polling):', error);
+      };
+
+      this.ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        this.reconnectAttempts++;
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
+        } else {
+          console.log('🔄 WebSocket unavailable - using HTTP polling instead');
         }
-      } catch (error) {
-        console.error('WebSocket message parse error:', error);
-      }
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    this.ws.onclose = () => {
-      console.log('WebSocket disconnected, reconnecting...');
-      this.reconnectTimeout = setTimeout(() => this.connect(), 3000);
-    };
+      };
+    } catch (error) {
+      console.warn('WebSocket initialization failed, using polling mode:', error);
+    }
   }
 
   disconnect() {
