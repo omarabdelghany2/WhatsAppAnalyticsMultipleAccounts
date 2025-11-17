@@ -1,15 +1,19 @@
+[providers]
+nodejs = "18"
+
 [phases.setup]
-nixPkgs = ["nodejs", "chromium"]
+nixPkgs = ["nodejs_18", "chromium"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["npm ci --prefer-offline --no-audit"]
 
 [phases.build]
 cmds = ["npm run railway:build"]
 
 [start]
-cmd = "npm run railway:start"
+cmd = "node server.js"
 
 [variables]
+NODE_ENV = "production"
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
 PUPPETEER_EXECUTABLE_PATH = "/nix/store/*-chromium-*/bin/chromium"

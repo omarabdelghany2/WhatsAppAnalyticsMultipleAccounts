@@ -28,18 +28,22 @@ Pipfile.lock
 
 # Node.js
 node_modules/
-package-lock.json
 .wwebjs_auth/
 .wwebjs_cache/
 
 # Config (may contain sensitive group names)
 config.json
 
+# Database files
+whatsapp_analytics.db
+whatsapp_analytics.db-journal
+*.db
+*.db-journal
+
 # Output files
 output/
 *.txt
 *.csv
-*.json
 
 # IDE
 .vscode/
