@@ -34,8 +34,20 @@ const GROUP_NAMES = config.groups || ["Army"];
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({
-    server,
-    path: '/ws'  // Use dedicated path for WebSocket on Railway
+    noServer: true  // Handle upgrades manually for Railway compatibility
+});
+
+// Handle WebSocket upgrade explicitly for Railway
+server.on('upgrade', (request, socket, head) => {
+    const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
+
+    if (pathname === '/ws') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
 });
 
 app.use(cors());
