@@ -55,7 +55,7 @@ const Index = () => {
   // Fetch all events (filtered by selected date, or all if selectedDate is null)
   const { data: eventsData } = useQuery({
     queryKey: ['events', selectedDate],
-    queryFn: () => api.getEvents(100, 0, selectedDate || undefined),
+    queryFn: () => api.getEvents(10000, 0, selectedDate || undefined), // Increased limit to fetch all events
     enabled: !!groupsData?.groups?.length,
   });
 
