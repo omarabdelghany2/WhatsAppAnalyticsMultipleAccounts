@@ -63,6 +63,28 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
 
   const filteredEvents = dialogType ? events.filter(e => e.type === dialogType) : [];
 
+  // Aggregate certificates by member (for display purposes)
+  const aggregatedCertificates = dialogType === 'CERTIFICATE' ?
+    Object.values(
+      filteredEvents.reduce((acc, event) => {
+        const key = event.memberId;
+        if (!acc[key]) {
+          acc[key] = {
+            memberId: event.memberId,
+            memberName: event.memberName,
+            groupId: event.groupId,
+            groupName: event.groupName,
+            count: 0,
+            dates: [] as string[]
+          };
+        }
+        acc[key].count++;
+        acc[key].dates.push(event.date);
+        return acc;
+      }, {} as Record<string, { memberId: string; memberName: string; groupId: string; groupName: string; count: number; dates: string[] }>)
+    ).sort((a, b) => b.count - a.count) // Sort by count descending
+    : [];
+
   const handleExportToExcel = async () => {
     if (filteredEvents.length === 0) return;
 
@@ -80,12 +102,20 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
       views: [{ showGridLines: false }]
     });
 
-    // Set column widths
-    worksheet.columns = [
-      { width: 35 }, // Name
-      { width: 25 }, // Phone Number
-      { width: 18 }  // Date
-    ];
+    // Set column widths based on event type
+    if (dialogType === 'CERTIFICATE') {
+      worksheet.columns = [
+        { width: 35 }, // Name
+        { width: 25 }, // Phone Number
+        { width: 18 }  // Certificate Count
+      ];
+    } else {
+      worksheet.columns = [
+        { width: 35 }, // Name
+        { width: 25 }, // Phone Number
+        { width: 18 }  // Date
+      ];
+    }
 
     // Row 1: Company Name (51Talk) with bright yellow background
     worksheet.mergeCells('A1:C1');
@@ -175,7 +205,11 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
 
     // Row 8: Column Headers with green background
     const headerRow = worksheet.getRow(8);
-    headerRow.values = ['Name', 'Phone Number', 'Date'];
+    if (dialogType === 'CERTIFICATE') {
+      headerRow.values = ['Name', 'Phone Number', 'Certificate Count'];
+    } else {
+      headerRow.values = ['Name', 'Phone Number', 'Date'];
+    }
     headerRow.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
     headerRow.fill = {
       type: 'pattern',
@@ -196,35 +230,69 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
     });
 
     // Add data rows with alternating yellow colors
-    filteredEvents.forEach((event, index) => {
-      const rowNumber = 9 + index;
-      const row = worksheet.getRow(rowNumber);
-      row.values = [event.memberName, event.memberId, event.date];
+    if (dialogType === 'CERTIFICATE') {
+      // For certificates, export aggregated data with counts
+      aggregatedCertificates.forEach((cert, index) => {
+        const rowNumber = 9 + index;
+        const row = worksheet.getRow(rowNumber);
+        row.values = [cert.memberName, cert.memberId, cert.count];
 
-      const isEven = index % 2 === 0;
-      const bgColor = isEven ? 'FFFFF9C4' : 'FFFFFDE7'; // Light yellow shades
+        const isEven = index % 2 === 0;
+        const bgColor = isEven ? 'FFFFF9C4' : 'FFFFFDE7'; // Light yellow shades
 
-      row.eachCell((cell, colNumber) => {
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: bgColor }
-        };
-        cell.alignment = {
-          vertical: 'middle',
-          horizontal: colNumber === 3 ? 'center' : 'left'
-        };
-        cell.border = {
-          top: { style: 'thin', color: { argb: 'FFE0E0E0' } },
-          bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
-          left: { style: 'thin', color: { argb: 'FFE0E0E0' } },
-          right: { style: 'thin', color: { argb: 'FFE0E0E0' } }
-        };
-        cell.font = { size: 11 };
+        row.eachCell((cell, colNumber) => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          };
+          cell.alignment = {
+            vertical: 'middle',
+            horizontal: colNumber === 3 ? 'center' : 'left'
+          };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            left: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            right: { style: 'thin', color: { argb: 'FFE0E0E0' } }
+          };
+          cell.font = { size: 11 };
+        });
+
+        row.height = 20;
       });
+    } else {
+      // For JOIN/LEAVE events, export individual events
+      filteredEvents.forEach((event, index) => {
+        const rowNumber = 9 + index;
+        const row = worksheet.getRow(rowNumber);
+        row.values = [event.memberName, event.memberId, event.date];
 
-      row.height = 20;
-    });
+        const isEven = index % 2 === 0;
+        const bgColor = isEven ? 'FFFFF9C4' : 'FFFFFDE7'; // Light yellow shades
+
+        row.eachCell((cell, colNumber) => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          };
+          cell.alignment = {
+            vertical: 'middle',
+            horizontal: colNumber === 3 ? 'center' : 'left'
+          };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            left: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+            right: { style: 'thin', color: { argb: 'FFE0E0E0' } }
+          };
+          cell.font = { size: 11 };
+        });
+
+        row.height = 20;
+      });
+    }
 
     // Generate filename
     const filename = `51Talk_${eventTypeKey}_${groupName.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
@@ -504,7 +572,7 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
                 variant="outline"
                 size="sm"
                 onClick={handleExportToExcel}
-                disabled={filteredEvents.length === 0}
+                disabled={dialogType === 'CERTIFICATE' ? aggregatedCertificates.length === 0 : filteredEvents.length === 0}
                 className="gap-2"
               >
                 <Download className="h-4 w-4" />
@@ -513,7 +581,32 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
             </div>
           </DialogHeader>
           <div className="max-h-96 overflow-y-auto">
-            {filteredEvents.length > 0 ? (
+            {dialogType === 'CERTIFICATE' && aggregatedCertificates.length > 0 ? (
+              <div className="space-y-2">
+                {aggregatedCertificates.map((cert) => (
+                  <div
+                    key={cert.memberId}
+                    className="p-3 border border-border rounded-lg hover:bg-accent transition-colors"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="font-medium text-foreground">
+                          {cert.memberName}
+                          <span className="ml-2 text-primary font-bold">
+                            ({cert.count} {translateMode ? '证书' : cert.count === 1 ? 'certificate' : 'certificates'})
+                          </span>
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">{cert.memberId}</p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {translateMode ? '日期: ' : 'Dates: '}
+                          {cert.dates.sort().join(', ')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : dialogType !== 'CERTIFICATE' && filteredEvents.length > 0 ? (
               <div className="space-y-2">
                 {filteredEvents.map((event) => (
                   <div
