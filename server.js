@@ -1436,47 +1436,67 @@ async function processMessage(msg, groupName, groupId) {
         let senderId = msg.author || '';
         let senderPhone = '';
 
+        // Log message data for debugging
+        console.log('📨 Message data:', {
+            author: msg.author,
+            notifyName: msg._data?.notifyName,
+            from: msg.from,
+            sender: msg._data?.sender,
+            participant: msg._data?.participant,
+            type: msg.type
+        });
+
         if (msg.author) {
-            try {
-                // Try to get contact directly using the author ID (works for both @lid and @c.us)
-                const contact = await client.getContactById(msg.author);
+            // Check if this is a @lid format (not supported by getContactById)
+            const isLidFormat = msg.author.includes('@lid');
 
-                // Get phone number from contact object
-                senderPhone = contact.number || msg.author.split('@')[0];
-                senderName = contact.pushname || contact.name || senderPhone;
+            if (isLidFormat) {
+                // For @lid format, use notification name or fallback to ID
+                senderName = msg._data?.notifyName || msg.author.split('@')[0];
+                senderPhone = msg.author.split('@')[0];
+                console.log(`⚠️ Using @lid format: ${senderName} (${senderPhone})`);
+            } else {
+                try {
+                    // Try to get contact for @c.us format
+                    const contact = await client.getContactById(msg.author);
 
-                console.log(`✅ Resolved sender: ${senderName} (${senderPhone}) from ID: ${msg.author}`);
-            } catch (e) {
-                console.log(`❌ Error getting contact for ${msg.author}:`, e.message);
+                    // Get phone number from contact object
+                    senderPhone = contact.number || msg.author.split('@')[0];
+                    senderName = contact.pushname || contact.name || senderPhone;
 
-                // Fallback: Try to find in participants list
-                if (groupChat && groupChat.participants) {
-                    const participant = groupChat.participants.find(p => {
-                        // Check if any part of the IDs match
-                        const authorNum = msg.author.split('@')[0];
-                        const pId = p.id._serialized || '';
-                        const pUser = p.id.user || '';
-                        return pId.includes(authorNum) || pUser.includes(authorNum);
-                    });
+                    console.log(`✅ Resolved sender: ${senderName} (${senderPhone}) from ID: ${msg.author}`);
+                } catch (e) {
+                    console.log(`❌ Error getting contact for ${msg.author}:`, e.message);
 
-                    if (participant) {
-                        try {
-                            const pContact = await client.getContactById(participant.id._serialized);
-                            senderPhone = pContact.number || participant.id.user;
-                            senderName = pContact.pushname || pContact.name || senderPhone;
-                            console.log(`✅ Resolved via participant: ${senderName} (${senderPhone})`);
-                        } catch (pe) {
-                            senderPhone = participant.id.user || msg.author.split('@')[0];
+                    // Fallback: Try to find in participants list
+                    if (groupChat && groupChat.participants) {
+                        const participant = groupChat.participants.find(p => {
+                            // Check if any part of the IDs match
+                            const authorNum = msg.author.split('@')[0];
+                            const pId = p.id._serialized || '';
+                            const pUser = p.id.user || '';
+                            return pId.includes(authorNum) || pUser.includes(authorNum);
+                        });
+
+                        if (participant) {
+                            try {
+                                const pContact = await client.getContactById(participant.id._serialized);
+                                senderPhone = pContact.number || participant.id.user;
+                                senderName = pContact.pushname || pContact.name || senderPhone;
+                                console.log(`✅ Resolved via participant: ${senderName} (${senderPhone})`);
+                            } catch (pe) {
+                                senderPhone = participant.id.user || msg.author.split('@')[0];
+                                senderName = senderPhone;
+                            }
+                        } else {
+                            // Last fallback
+                            senderPhone = msg.author.split('@')[0];
                             senderName = senderPhone;
                         }
                     } else {
-                        // Last fallback
                         senderPhone = msg.author.split('@')[0];
                         senderName = senderPhone;
                     }
-                } else {
-                    senderPhone = msg.author.split('@')[0];
-                    senderName = senderPhone;
                 }
             }
         }
