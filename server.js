@@ -100,6 +100,7 @@ function initializeDatabase() {
                 group_id TEXT NOT NULL,
                 group_name TEXT NOT NULL,
                 sender TEXT NOT NULL,
+                sender_id TEXT,
                 message TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -135,6 +136,17 @@ function initializeDatabase() {
                     SET date = substr(timestamp, 1, 10)
                     WHERE date IS NULL
                 `);
+            }
+        });
+
+        // Add sender_id column to existing messages table if it doesn't exist
+        db.run(`
+            ALTER TABLE messages ADD COLUMN sender_id TEXT
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding sender_id column:', err);
+            } else if (!err) {
+                console.log('✅ Added sender_id column to messages table');
             }
         });
 
@@ -372,7 +384,7 @@ app.get('/api/messages', (req, res) => {
 
         // Get paginated messages (sorted by timestamp DESC - newest first)
         db.all(`
-            SELECT id, group_id as groupId, group_name as groupName, sender, message, timestamp
+            SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?
@@ -409,7 +421,7 @@ app.get('/api/messages/:groupId', (req, res) => {
 
         // Get paginated messages for this group
         db.all(`
-            SELECT id, group_id as groupId, group_name as groupName, sender, message, timestamp
+            SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
             WHERE group_id = ?
             ORDER BY timestamp DESC
@@ -554,7 +566,7 @@ app.get('/api/search', (req, res) => {
     if (groupId) {
         // Search in specific group
         sqlQuery = `
-            SELECT id, group_id as groupId, group_name as groupName, sender, message, timestamp
+            SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
             WHERE group_id = ? AND (message LIKE ? OR sender LIKE ?)
             ORDER BY timestamp DESC
@@ -564,7 +576,7 @@ app.get('/api/search', (req, res) => {
     } else {
         // Search in all groups
         sqlQuery = `
-            SELECT id, group_id as groupId, group_name as groupName, sender, message, timestamp
+            SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
             WHERE message LIKE ? OR sender LIKE ?
             ORDER BY timestamp DESC
@@ -1196,12 +1208,12 @@ async function checkMessages(groupId, groupInfo) {
 
             // Save messages to SQLite database
             const insertStmt = db.prepare(`
-                INSERT OR REPLACE INTO messages (id, group_id, group_name, sender, message, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO messages (id, group_id, group_name, sender, sender_id, message, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             `);
 
             for (const msg of processedMessages) {
-                insertStmt.run(msg.id, msg.groupId, msg.groupName, msg.sender, msg.message, msg.timestamp);
+                insertStmt.run(msg.id, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
             }
 
             insertStmt.finalize();
@@ -1338,12 +1350,18 @@ async function processMessage(msg, groupName, groupId) {
         // Handle regular messages
         let senderName = 'Unknown';
         let senderId = msg.author || '';
+        let senderPhone = '';
+
         if (msg.author) {
             try {
                 const contact = await client.getContactById(msg.author);
                 senderName = contact.pushname || contact.name || contact.number || 'Unknown';
+                // Extract phone number from WhatsApp ID (format: 1234567890@c.us)
+                senderPhone = msg.author.split('@')[0];
             } catch (e) {
-                senderName = msg.author.split('@')[0];
+                // Fallback: extract phone from ID
+                senderPhone = msg.author.split('@')[0];
+                senderName = senderPhone;
             }
         }
 
@@ -1384,10 +1402,18 @@ async function processMessage(msg, groupName, groupId) {
             body = body || `<${msg.type}>`;
         }
 
+        // Format sender with phone number if available
+        let senderDisplay = senderName;
+        if (senderPhone && senderName !== senderPhone) {
+            senderDisplay = `${senderName} (${senderPhone})`;
+        } else if (senderPhone) {
+            senderDisplay = senderPhone;
+        }
+
         return {
             id: msg.id._serialized,
             timestamp: timestamp.toISOString(),
-            sender: senderName,
+            sender: senderDisplay,
             senderId: msg.author || '',
             message: body,
             type: msg.type,
