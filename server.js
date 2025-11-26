@@ -165,6 +165,9 @@ function initializeDatabase() {
 // In-memory storage for group info (lightweight, doesn't need persistence)
 const groupInfoStore = new Map(); // groupId -> { name, id, memberCount }
 
+// In-memory cache for group members: groupId -> Map(memberId -> {name, phone, isAdmin})
+const groupMembersCache = new Map();
+
 // WebSocket clients
 const wsClients = new Set();
 
@@ -396,6 +399,9 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         // Get all participants
         const participants = chat.participants;
 
+        // Create a Map for this group's members cache
+        const membersMap = new Map();
+
         // Fetch contact details for each participant
         const members = await Promise.all(
             participants.map(async (participant) => {
@@ -404,26 +410,48 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
                     const phone = contact.number || participant.id.user;
                     const name = contact.pushname || contact.name || phone;
 
-                    return {
+                    const memberData = {
                         id: participant.id._serialized,
                         phone: phone,
                         name: name,
                         isAdmin: participant.isAdmin,
                         isSuperAdmin: participant.isSuperAdmin
                     };
+
+                    // Cache this member by their ID
+                    membersMap.set(participant.id._serialized, {
+                        name: name,
+                        phone: phone,
+                        isAdmin: participant.isAdmin
+                    });
+
+                    return memberData;
                 } catch (error) {
                     // Fallback if contact fetch fails
                     const phone = participant.id.user;
-                    return {
+                    const memberData = {
                         id: participant.id._serialized,
                         phone: phone,
                         name: phone,
                         isAdmin: participant.isAdmin,
                         isSuperAdmin: participant.isSuperAdmin
                     };
+
+                    // Cache this member
+                    membersMap.set(participant.id._serialized, {
+                        name: phone,
+                        phone: phone,
+                        isAdmin: participant.isAdmin
+                    });
+
+                    return memberData;
                 }
             })
         );
+
+        // Store the members map in cache
+        groupMembersCache.set(groupId, membersMap);
+        console.log(`✅ Cached ${membersMap.size} members for group ${groupId}`);
 
         // Sort by name
         members.sort((a, b) => a.name.localeCompare(b.name));
@@ -1174,9 +1202,56 @@ async function initializeGroups() {
                 previousMembers: new Set(members),
                 isFirstRun: true
             });
+
+            // Cache group members for message author resolution
+            await cacheGroupMembers(group.id._serialized);
         } else {
             console.log(`❌ Group "${groupName}" not found`);
         }
+    }
+}
+
+// Function to cache group members for fast lookup
+async function cacheGroupMembers(groupId) {
+    try {
+        console.log(`🔄 Caching members for group ${groupId}...`);
+
+        const chat = await client.getChatById(groupId);
+        if (!chat.isGroup || !chat.participants) {
+            console.log(`⚠️ Not a group or no participants`);
+            return;
+        }
+
+        const membersMap = new Map();
+
+        // Process each participant
+        for (const participant of chat.participants) {
+            try {
+                const contact = await client.getContactById(participant.id._serialized);
+                const phone = contact.number || participant.id.user;
+                const name = contact.pushname || contact.name || phone;
+
+                membersMap.set(participant.id._serialized, {
+                    name: name,
+                    phone: phone,
+                    isAdmin: participant.isAdmin
+                });
+            } catch (error) {
+                // Fallback: use participant.id.user
+                const phone = participant.id.user;
+                membersMap.set(participant.id._serialized, {
+                    name: phone,
+                    phone: phone,
+                    isAdmin: participant.isAdmin
+                });
+            }
+        }
+
+        // Store in cache
+        groupMembersCache.set(groupId, membersMap);
+        console.log(`✅ Cached ${membersMap.size} members for group`);
+    } catch (error) {
+        console.error(`❌ Error caching members:`, error.message);
     }
 }
 
@@ -1327,37 +1402,12 @@ async function processMessage(msg, groupName, groupId) {
     try {
         const timestamp = new Date(msg.timestamp * 1000);
 
-        // Get group chat to access participants for proper ID resolution
-        let groupChat = null;
-        try {
-            groupChat = await client.getChatById(groupId);
-
-            // Log BOTH @c.us and @lid participants
-            if (groupChat && groupChat.participants && groupChat.participants.length > 0) {
-                console.log(`\n📋 Group has ${groupChat.participants.length} participants`);
-
-                // Count how many are @c.us vs @lid
-                const cUsCount = groupChat.participants.filter(p => p.id._serialized.includes('@c.us')).length;
-                const lidCount = groupChat.participants.filter(p => p.id._serialized.includes('@lid')).length;
-                console.log(`  @c.us: ${cUsCount}, @lid: ${lidCount}`);
-
-                // Show first 3 @c.us and first 3 @lid
-                const cUsParticipants = groupChat.participants.filter(p => p.id._serialized.includes('@c.us')).slice(0, 3);
-                const lidParticipants = groupChat.participants.filter(p => p.id._serialized.includes('@lid')).slice(0, 3);
-
-                console.log('\n  Sample @c.us participants:');
-                for (const p of cUsParticipants) {
-                    console.log(`    - ${p.id._serialized} (user: ${p.id.user})`);
-                }
-
-                console.log('\n  Sample @lid participants:');
-                for (const p of lidParticipants) {
-                    console.log(`    - ${p.id._serialized} (user: ${p.id.user})`);
-                }
-                console.log('\n');
-            }
-        } catch (e) {
-            console.error('Error getting group chat:', e.message);
+        // Check if we have cached members for this group
+        const cachedMembers = groupMembersCache.get(groupId);
+        if (cachedMembers) {
+            console.log(`📦 Using cached members for group (${cachedMembers.size} members cached)`);
+        } else {
+            console.log(`⚠️ No cached members for group ${groupId} - cache may need refresh`);
         }
 
         // Handle notification messages (joins, leaves, etc.)
@@ -1456,44 +1506,31 @@ async function processMessage(msg, groupName, groupId) {
             };
         }
 
-        // Handle regular messages - Create ContactId and use it to get contact details
+        // Handle regular messages - Use cached members to resolve author
         let senderName = 'Unknown';
         let senderId = msg.author || '';
         let senderPhone = '';
 
         if (msg.author) {
-            try {
-                console.log(`🔍 Resolving contact for: ${msg.author}`);
+            console.log(`🔍 Looking up author: ${msg.author}`);
 
-                // Parse the ContactId from msg.author (_serialized format)
-                // Example: "183373762945250@lid" -> user: "183373762945250", server: "lid"
-                const parts = msg.author.split('@');
-                const userId = parts[0];
-                const serverType = parts[1] || 'c.us';
+            // First try: Look up in cached members
+            if (cachedMembers && cachedMembers.has(msg.author)) {
+                const memberInfo = cachedMembers.get(msg.author);
+                senderPhone = memberInfo.phone;
+                senderName = memberInfo.name;
+                console.log(`✅ Found in cache: ${senderName} (${senderPhone})`);
+            } else {
+                console.log(`⚠️ Author ${msg.author} NOT in cache`);
+                console.log(`   Cache has ${cachedMembers ? cachedMembers.size : 0} members`);
 
-                console.log(`   ContactId parts - user: ${userId}, server: ${serverType}`);
+                if (cachedMembers && cachedMembers.size > 0) {
+                    // Show sample of cached IDs to compare
+                    const sampleIds = Array.from(cachedMembers.keys()).slice(0, 3);
+                    console.log(`   Sample cached IDs:`, sampleIds);
+                }
 
-                // Create a ContactId object to use with getContactById
-                const contactId = {
-                    user: userId,
-                    server: serverType,
-                    _serialized: msg.author
-                };
-
-                console.log(`   Attempting getContactById with ContactId:`, contactId);
-
-                // Try to get contact using the ContactId
-                const contact = await client.getContactById(contactId);
-
-                // Extract phone and name from contact
-                senderPhone = contact.number || userId;
-                senderName = contact.pushname || contact.name || senderPhone;
-
-                console.log(`✅ Resolved: ${senderName} (${senderPhone})`);
-            } catch (error) {
-                console.log(`❌ getContactById with ContactId failed:`, error.message);
-
-                // Last resort: just use the ID
+                // Fallback: use the author ID directly
                 senderPhone = msg.author.split('@')[0];
                 senderName = senderPhone;
             }
