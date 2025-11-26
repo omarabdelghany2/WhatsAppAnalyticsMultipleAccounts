@@ -1456,45 +1456,55 @@ async function processMessage(msg, groupName, groupId) {
             };
         }
 
-        // Handle regular messages - Try getContactById directly (works for both @lid and @c.us)
+        // Handle regular messages - Use msg.getChat() to access fresh participant data
         let senderName = 'Unknown';
         let senderId = msg.author || '';
         let senderPhone = '';
 
         if (msg.author) {
             try {
-                console.log(`🔍 Getting contact for: ${msg.author}`);
+                console.log(`🔍 Getting chat from message for author: ${msg.author}`);
 
-                // Try getContactById directly with msg.author
-                // This should work for @lid IDs and return contact.number
-                const contact = await client.getContactById(msg.author);
+                // Get chat directly from the message (might have different participant data)
+                const msgChat = await msg.getChat();
 
-                // Use contact.number (same as Total Members endpoint)
-                senderPhone = contact.number || contact.id?.user || msg.author.split('@')[0];
-                senderName = contact.pushname || contact.name || senderPhone;
+                if (msgChat.isGroup && msgChat.participants) {
+                    console.log(`   Message chat has ${msgChat.participants.length} participants`);
 
-                console.log(`✅ Resolved: ${senderName} (${senderPhone})`);
-            } catch (error) {
-                console.log(`❌ getContactById failed for ${msg.author}: ${error.message}`);
-
-                // Fallback: Try to find in participants (for @c.us)
-                if (groupChat && groupChat.participants) {
-                    const participant = groupChat.participants.find(p =>
+                    // Look for participant matching msg.author
+                    const participant = msgChat.participants.find(p =>
                         p.id._serialized === msg.author
                     );
 
                     if (participant) {
-                        senderPhone = participant.id.user;
-                        senderName = senderPhone;
-                        console.log(`✅ Found in participants: ${senderPhone}`);
+                        console.log(`✅ Found participant: ${participant.id._serialized} (user: ${participant.id.user})`);
+
+                        // Get contact details
+                        try {
+                            const contact = await client.getContactById(participant.id._serialized);
+                            senderPhone = contact.number || participant.id.user;
+                            senderName = contact.pushname || contact.name || senderPhone;
+                            console.log(`✅ Contact resolved: ${senderName} (${senderPhone})`);
+                        } catch (contactErr) {
+                            // Use participant.id.user as phone
+                            senderPhone = participant.id.user;
+                            senderName = senderPhone;
+                            console.log(`✅ Using id.user: ${senderPhone}`);
+                        }
                     } else {
+                        console.log(`⚠️ Author ${msg.author} not found in msg.getChat() participants`);
                         senderPhone = msg.author.split('@')[0];
                         senderName = senderPhone;
                     }
                 } else {
+                    console.log(`⚠️ msgChat is not a group or has no participants`);
                     senderPhone = msg.author.split('@')[0];
                     senderName = senderPhone;
                 }
+            } catch (error) {
+                console.log(`❌ Error with msg.getChat():`, error.message);
+                senderPhone = msg.author.split('@')[0];
+                senderName = senderPhone;
             }
         } else {
             console.log(`⚠️ No author for message`);
