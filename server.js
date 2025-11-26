@@ -976,6 +976,7 @@ function findChromiumExecutable() {
     return null;
 }
 
+
 async function initClient() {
     const chromiumPath = findChromiumExecutable();
     const puppeteerConfig = {
