@@ -1327,6 +1327,14 @@ async function processMessage(msg, groupName, groupId) {
     try {
         const timestamp = new Date(msg.timestamp * 1000);
 
+        // Get group chat to access participants for proper ID resolution
+        let groupChat = null;
+        try {
+            groupChat = await client.getChatById(groupId);
+        } catch (e) {
+            console.error('Error getting group chat:', e.message);
+        }
+
         // Handle notification messages (joins, leaves, etc.)
         if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
             // Extract notification details - use body as default message
@@ -1430,9 +1438,28 @@ async function processMessage(msg, groupName, groupId) {
 
         if (msg.author) {
             try {
-                const contact = await client.getContactById(msg.author);
+                // First, try to find participant in group chat
+                let participantId = msg.author;
+
+                // If we have the group chat, look for the participant
+                if (groupChat && groupChat.participants) {
+                    // The author might just be the phone number without @c.us
+                    // So we need to find the matching participant
+                    const authorStr = msg.author.replace('@c.us', '').replace('@s.whatsapp.net', '');
+                    const participant = groupChat.participants.find(p => {
+                        const pId = p.id._serialized || p.id.user || '';
+                        return pId.includes(authorStr);
+                    });
+
+                    if (participant) {
+                        participantId = participant.id._serialized;
+                    }
+                }
+
+                // Get contact details using the resolved participant ID
+                const contact = await client.getContactById(participantId);
                 // Get the actual phone number from contact object (most reliable)
-                senderPhone = contact.number || msg.author.split('@')[0];
+                senderPhone = contact.number || participantId.split('@')[0];
                 // Get display name (prefer pushname, then name, then phone number)
                 senderName = contact.pushname || contact.name || senderPhone;
             } catch (e) {
