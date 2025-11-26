@@ -1438,41 +1438,46 @@ async function processMessage(msg, groupName, groupId) {
 
         if (msg.author) {
             try {
-                // If we have the group chat, find the participant (same as Total Members)
-                if (groupChat && groupChat.participants) {
-                    // The author might just be the phone number without @c.us
-                    const authorStr = msg.author.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@lid', '');
+                // Try to get contact directly using the author ID (works for both @lid and @c.us)
+                const contact = await client.getContactById(msg.author);
 
-                    // Find matching participant
+                // Get phone number from contact object
+                senderPhone = contact.number || msg.author.split('@')[0];
+                senderName = contact.pushname || contact.name || senderPhone;
+
+                console.log(`✅ Resolved sender: ${senderName} (${senderPhone}) from ID: ${msg.author}`);
+            } catch (e) {
+                console.log(`❌ Error getting contact for ${msg.author}:`, e.message);
+
+                // Fallback: Try to find in participants list
+                if (groupChat && groupChat.participants) {
                     const participant = groupChat.participants.find(p => {
+                        // Check if any part of the IDs match
+                        const authorNum = msg.author.split('@')[0];
                         const pId = p.id._serialized || '';
                         const pUser = p.id.user || '';
-                        return pId.includes(authorStr) || pUser.includes(authorStr) || authorStr.includes(pUser);
+                        return pId.includes(authorNum) || pUser.includes(authorNum);
                     });
 
                     if (participant) {
-                        // Use the same approach as Total Members endpoint
-                        const contact = await client.getContactById(participant.id._serialized);
-                        senderPhone = contact.number || participant.id.user;
-                        senderName = contact.pushname || contact.name || senderPhone;
-
-                        console.log(`✅ Resolved sender: ${senderName} (${senderPhone}) from ID: ${msg.author}`);
+                        try {
+                            const pContact = await client.getContactById(participant.id._serialized);
+                            senderPhone = pContact.number || participant.id.user;
+                            senderName = pContact.pushname || pContact.name || senderPhone;
+                            console.log(`✅ Resolved via participant: ${senderName} (${senderPhone})`);
+                        } catch (pe) {
+                            senderPhone = participant.id.user || msg.author.split('@')[0];
+                            senderName = senderPhone;
+                        }
                     } else {
-                        console.log(`⚠️ No participant found for author: ${msg.author}`);
+                        // Last fallback
                         senderPhone = msg.author.split('@')[0];
                         senderName = senderPhone;
                     }
                 } else {
-                    // Fallback if no group chat
-                    const contact = await client.getContactById(msg.author);
-                    senderPhone = contact.number || msg.author.split('@')[0];
-                    senderName = contact.pushname || contact.name || senderPhone;
+                    senderPhone = msg.author.split('@')[0];
+                    senderName = senderPhone;
                 }
-            } catch (e) {
-                console.log(`❌ Error getting contact for ${msg.author}:`, e.message);
-                // Fallback: extract phone from WhatsApp ID
-                senderPhone = msg.author.split('@')[0];
-                senderName = senderPhone;
             }
         }
 
