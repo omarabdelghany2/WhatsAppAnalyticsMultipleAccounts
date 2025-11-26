@@ -371,6 +371,80 @@ app.get('/api/groups', (req, res) => {
     });
 });
 
+// Get all members of a specific group with their phone numbers
+app.get('/api/groups/:groupId/members', async (req, res) => {
+    try {
+        const groupId = req.params.groupId;
+
+        if (!client || !client.info) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready'
+            });
+        }
+
+        // Get the group chat
+        const chat = await client.getChatById(groupId);
+
+        if (!chat.isGroup) {
+            return res.status(400).json({
+                success: false,
+                error: 'Chat is not a group'
+            });
+        }
+
+        // Get all participants
+        const participants = chat.participants;
+
+        // Fetch contact details for each participant
+        const members = await Promise.all(
+            participants.map(async (participant) => {
+                try {
+                    const contact = await client.getContactById(participant.id._serialized);
+                    const phone = contact.number || participant.id.user;
+                    const name = contact.pushname || contact.name || phone;
+
+                    return {
+                        id: participant.id._serialized,
+                        phone: phone,
+                        name: name,
+                        isAdmin: participant.isAdmin,
+                        isSuperAdmin: participant.isSuperAdmin
+                    };
+                } catch (error) {
+                    // Fallback if contact fetch fails
+                    const phone = participant.id.user;
+                    return {
+                        id: participant.id._serialized,
+                        phone: phone,
+                        name: phone,
+                        isAdmin: participant.isAdmin,
+                        isSuperAdmin: participant.isSuperAdmin
+                    };
+                }
+            })
+        );
+
+        // Sort by name
+        members.sort((a, b) => a.name.localeCompare(b.name));
+
+        res.json({
+            success: true,
+            groupId: groupId,
+            groupName: chat.name,
+            members: members,
+            totalMembers: members.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching group members:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // Get messages from all groups
 app.get('/api/messages', (req, res) => {
     const limit = parseInt(req.query.limit) || 100;
@@ -1478,6 +1552,7 @@ server.listen(PORT, () => {
     console.log('\nAPI Endpoints:');
     console.log(`  GET  /api/health - Server health check`);
     console.log(`  GET  /api/groups - List monitored groups`);
+    console.log(`  GET  /api/groups/:groupId/members - Get all members of a group`);
     console.log(`  GET  /api/messages - Get all messages (paginated)`);
     console.log(`  GET  /api/messages/:groupId - Get messages from specific group`);
     console.log(`  GET  /api/events - Get all join/leave events`);

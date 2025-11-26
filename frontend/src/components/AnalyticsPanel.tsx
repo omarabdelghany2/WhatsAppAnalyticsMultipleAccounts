@@ -35,15 +35,18 @@ interface AnalyticsPanelProps {
   onDateFilterChange?: (date: string | null) => void;
   events?: Event[];
   groupName?: string;
+  groupId?: string;
 }
 
-export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, events = [], groupName = "All Groups" }: AnalyticsPanelProps) {
+export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, events = [], groupName = "All Groups", groupId }: AnalyticsPanelProps) {
   const [mode, setMode] = useState<"all" | "specific" | "period">("specific");
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [startDate, setStartDate] = useState<Date>(() => new Date());
   const [endDate, setEndDate] = useState<Date>(() => new Date());
   const [showDialog, setShowDialog] = useState(false);
-  const [dialogType, setDialogType] = useState<'JOIN' | 'LEAVE' | 'CERTIFICATE' | null>(null);
+  const [dialogType, setDialogType] = useState<'JOIN' | 'LEAVE' | 'CERTIFICATE' | 'MEMBERS' | null>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
 
   // Notify parent of initial date on mount
   useEffect(() => {
@@ -56,9 +59,25 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
     }
   }, []);
 
-  const handleCardClick = (type: 'JOIN' | 'LEAVE' | 'CERTIFICATE') => {
+  const handleCardClick = async (type: 'JOIN' | 'LEAVE' | 'CERTIFICATE' | 'MEMBERS') => {
     setDialogType(type);
     setShowDialog(true);
+
+    // Fetch members if MEMBERS type and groupId is available
+    if (type === 'MEMBERS' && groupId) {
+      setLoadingMembers(true);
+      try {
+        const response = await fetch(`/api/groups/${groupId}/members`);
+        const data = await response.json();
+        if (data.success) {
+          setMembers(data.members);
+        }
+      } catch (error) {
+        console.error('Error fetching members:', error);
+      } finally {
+        setLoadingMembers(false);
+      }
+    }
   };
 
   const filteredEvents = dialogType ? events.filter(e => e.type === dialogType) : [];
@@ -314,7 +333,8 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
       value: analytics.totalMembers,
       icon: Users,
       color: "text-primary",
-      clickable: false,
+      clickable: true,
+      onClick: () => handleCardClick('MEMBERS'),
     },
     {
       title: translateMode ? "加入成员" : "Members Joined",
@@ -565,23 +585,60 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
                   ? (translateMode ? "加入成员" : "Members Joined")
                   : dialogType === 'LEAVE'
                   ? (translateMode ? "离开成员" : "Members Left")
+                  : dialogType === 'MEMBERS'
+                  ? (translateMode ? "所有成员" : "All Members")
                   : (translateMode ? "证书" : "Certificates")
                 }
               </DialogTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportToExcel}
-                disabled={dialogType === 'CERTIFICATE' ? aggregatedCertificates.length === 0 : filteredEvents.length === 0}
-                className="gap-2"
-              >
-                <Download className="h-4 w-4" />
-                {translateMode ? "导出" : "Export"}
-              </Button>
+              {dialogType !== 'MEMBERS' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportToExcel}
+                  disabled={dialogType === 'CERTIFICATE' ? aggregatedCertificates.length === 0 : filteredEvents.length === 0}
+                  className="gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  {translateMode ? "导出" : "Export"}
+                </Button>
+              )}
             </div>
           </DialogHeader>
           <div className="max-h-96 overflow-y-auto">
-            {dialogType === 'CERTIFICATE' && aggregatedCertificates.length > 0 ? (
+            {dialogType === 'MEMBERS' ? (
+              loadingMembers ? (
+                <p className="text-center text-muted-foreground py-8">
+                  {translateMode ? "加载中..." : "Loading..."}
+                </p>
+              ) : members.length > 0 ? (
+                <div className="space-y-2">
+                  {members.map((member) => (
+                    <div
+                      key={member.id}
+                      className="p-3 border border-border rounded-lg hover:bg-accent transition-colors"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <p className="font-medium text-foreground">
+                            {member.name}
+                            {member.isAdmin && (
+                              <span className="ml-2 text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
+                                {translateMode ? "管理员" : "Admin"}
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-sm text-primary mt-1">{member.phone}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-muted-foreground py-8">
+                  {translateMode ? "没有数据" : "No members found"}
+                </p>
+              )
+            ) : dialogType === 'CERTIFICATE' && aggregatedCertificates.length > 0 ? (
               <div className="space-y-2">
                 {aggregatedCertificates.map((cert) => (
                   <div
@@ -606,7 +663,7 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
                   </div>
                 ))}
               </div>
-            ) : dialogType !== 'CERTIFICATE' && filteredEvents.length > 0 ? (
+            ) : dialogType !== 'CERTIFICATE' && dialogType !== 'MEMBERS' && filteredEvents.length > 0 ? (
               <div className="space-y-2">
                 {filteredEvents.map((event) => (
                   <div

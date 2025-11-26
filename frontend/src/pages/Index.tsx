@@ -382,6 +382,7 @@ const Index = () => {
             onDateFilterChange={setSelectedDate}
             events={filteredEvents}
             groupName={selectedGroupName}
+            groupId={selectedGroupId}
           />
         </div>
       </div>
