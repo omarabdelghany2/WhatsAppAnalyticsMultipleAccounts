@@ -1431,74 +1431,52 @@ async function processMessage(msg, groupName, groupId) {
             };
         }
 
-        // Handle regular messages
+        // Handle regular messages - Use same approach as Total Members endpoint
         let senderName = 'Unknown';
         let senderId = msg.author || '';
         let senderPhone = '';
 
-        // Log message data for debugging
-        console.log('📨 Message data:', {
-            author: msg.author,
-            notifyName: msg._data?.notifyName,
-            from: msg.from,
-            sender: msg._data?.sender,
-            participant: msg._data?.participant,
-            type: msg.type
-        });
+        if (msg.author && groupChat && groupChat.participants) {
+            try {
+                // Extract just the ID number from author (remove @lid, @c.us, etc.)
+                const authorId = msg.author.split('@')[0];
 
-        if (msg.author) {
-            // Check if this is a @lid format (not supported by getContactById)
-            const isLidFormat = msg.author.includes('@lid');
+                // Find matching participant in group (same as Total Members)
+                const participant = groupChat.participants.find(p => {
+                    const pId = p.id._serialized || '';
+                    const pUser = p.id.user || '';
+                    // Match if author ID is contained in participant ID or user field
+                    return pId.includes(authorId) || pUser.includes(authorId) ||
+                           pId === msg.author || authorId === pUser;
+                });
 
-            if (isLidFormat) {
-                // For @lid format, use notification name or fallback to ID
-                senderName = msg._data?.notifyName || msg.author.split('@')[0];
-                senderPhone = msg.author.split('@')[0];
-                console.log(`⚠️ Using @lid format: ${senderName} (${senderPhone})`);
-            } else {
-                try {
-                    // Try to get contact for @c.us format
-                    const contact = await client.getContactById(msg.author);
-
-                    // Get phone number from contact object
-                    senderPhone = contact.number || msg.author.split('@')[0];
-                    senderName = contact.pushname || contact.name || senderPhone;
-
-                    console.log(`✅ Resolved sender: ${senderName} (${senderPhone}) from ID: ${msg.author}`);
-                } catch (e) {
-                    console.log(`❌ Error getting contact for ${msg.author}:`, e.message);
-
-                    // Fallback: Try to find in participants list
-                    if (groupChat && groupChat.participants) {
-                        const participant = groupChat.participants.find(p => {
-                            // Check if any part of the IDs match
-                            const authorNum = msg.author.split('@')[0];
-                            const pId = p.id._serialized || '';
-                            const pUser = p.id.user || '';
-                            return pId.includes(authorNum) || pUser.includes(authorNum);
-                        });
-
-                        if (participant) {
-                            try {
-                                const pContact = await client.getContactById(participant.id._serialized);
-                                senderPhone = pContact.number || participant.id.user;
-                                senderName = pContact.pushname || pContact.name || senderPhone;
-                                console.log(`✅ Resolved via participant: ${senderName} (${senderPhone})`);
-                            } catch (pe) {
-                                senderPhone = participant.id.user || msg.author.split('@')[0];
-                                senderName = senderPhone;
-                            }
-                        } else {
-                            // Last fallback
-                            senderPhone = msg.author.split('@')[0];
-                            senderName = senderPhone;
-                        }
-                    } else {
-                        senderPhone = msg.author.split('@')[0];
+                if (participant) {
+                    // Found participant! Get contact details (same as Total Members)
+                    try {
+                        const contact = await client.getContactById(participant.id._serialized);
+                        senderPhone = contact.number || participant.id.user;
+                        senderName = contact.pushname || contact.name || senderPhone;
+                        console.log(`✅ Resolved: ${senderName} (${senderPhone}) via participant matching`);
+                    } catch (contactErr) {
+                        // Fallback to participant.id.user (phone number)
+                        senderPhone = participant.id.user;
                         senderName = senderPhone;
+                        console.log(`✅ Using participant.id.user: ${senderPhone}`);
                     }
+                } else {
+                    console.log(`⚠️ No participant found for author: ${msg.author}`);
+                    senderPhone = authorId;
+                    senderName = authorId;
                 }
+            } catch (error) {
+                console.log(`❌ Error resolving sender:`, error.message);
+                senderPhone = msg.author.split('@')[0];
+                senderName = senderPhone;
             }
+        } else {
+            // No group chat or participants available
+            senderPhone = msg.author ? msg.author.split('@')[0] : 'Unknown';
+            senderName = senderPhone;
         }
 
         // Detect voice recordings (audio/ptt) and save as CERTIFICATE event
