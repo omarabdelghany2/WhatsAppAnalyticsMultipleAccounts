@@ -1273,10 +1273,11 @@ async function processMessage(msg, groupName, groupId) {
             if (msg.recipientIds && msg.recipientIds.length > 0) {
                 memberId = msg.recipientIds[0];
 
-                // Get member name
+                // Get member name and phone
                 try {
                     const contact = await client.getContactById(memberId);
-                    memberName = contact.pushname || contact.name || contact.number || memberId.split('@')[0];
+                    const memberPhone = contact.number || memberId.split('@')[0];
+                    memberName = contact.pushname || contact.name || memberPhone;
                 } catch (e) {
                     memberName = memberId.split('@')[0];
                 }
@@ -1355,11 +1356,12 @@ async function processMessage(msg, groupName, groupId) {
         if (msg.author) {
             try {
                 const contact = await client.getContactById(msg.author);
-                senderName = contact.pushname || contact.name || contact.number || 'Unknown';
-                // Extract phone number from WhatsApp ID (format: 1234567890@c.us)
-                senderPhone = msg.author.split('@')[0];
+                // Get the actual phone number from contact object (most reliable)
+                senderPhone = contact.number || msg.author.split('@')[0];
+                // Get display name (prefer pushname, then name, then phone number)
+                senderName = contact.pushname || contact.name || senderPhone;
             } catch (e) {
-                // Fallback: extract phone from ID
+                // Fallback: extract phone from WhatsApp ID (format: 1234567890@c.us)
                 senderPhone = msg.author.split('@')[0];
                 senderName = senderPhone;
             }
