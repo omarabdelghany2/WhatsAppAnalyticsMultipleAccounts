@@ -1250,6 +1250,16 @@ async function cacheGroupMembers(groupId) {
         // Store in cache
         groupMembersCache.set(groupId, membersMap);
         console.log(`✅ Cached ${membersMap.size} members for group`);
+
+        // Show first 5 cached member IDs
+        const cachedIds = Array.from(membersMap.keys()).slice(0, 5);
+        console.log(`   Sample cached IDs:`, cachedIds);
+
+        // Show their details
+        cachedIds.forEach(id => {
+            const member = membersMap.get(id);
+            console.log(`     ${id} -> ${member.name} (${member.phone})`);
+        });
     } catch (error) {
         console.error(`❌ Error caching members:`, error.message);
     }
@@ -1525,9 +1535,13 @@ async function processMessage(msg, groupName, groupId) {
                 console.log(`   Cache has ${cachedMembers ? cachedMembers.size : 0} members`);
 
                 if (cachedMembers && cachedMembers.size > 0) {
-                    // Show sample of cached IDs to compare
-                    const sampleIds = Array.from(cachedMembers.keys()).slice(0, 3);
-                    console.log(`   Sample cached IDs:`, sampleIds);
+                    // Show ALL cached IDs to compare
+                    const allIds = Array.from(cachedMembers.keys());
+                    console.log(`   ALL cached IDs:`);
+                    allIds.forEach(id => {
+                        const member = cachedMembers.get(id);
+                        console.log(`     ${id} -> ${member.name} (${member.phone})`);
+                    });
                 }
 
                 // Fallback: use the author ID directly
