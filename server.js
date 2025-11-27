@@ -1523,12 +1523,25 @@ async function processMessage(msg, groupName, groupId) {
 
         if (msg.author) {
             try {
-                // Simple approach from working commit: just get contact by author ID
+                // Get contact by author ID
                 const contact = await client.getContactById(msg.author);
 
-                // Get phone number and name
-                senderPhone = contact.number || msg.author.split('@')[0];
-                const contactName = contact.pushname || contact.name || '';
+                // Log ALL contact properties to see what we have
+                console.log(`\n🔍 Contact object for ${msg.author}:`);
+                console.log(`  id._serialized: ${contact.id?._serialized}`);
+                console.log(`  id.user: ${contact.id?.user}`);
+                console.log(`  id.server: ${contact.id?.server}`);
+                console.log(`  number: ${contact.number}`);
+                console.log(`  pushname: ${contact.pushname}`);
+                console.log(`  name: ${contact.name}`);
+                console.log(`  shortName: ${contact.shortName}`);
+                console.log(`  isMyContact: ${contact.isMyContact}`);
+                console.log(`  isUser: ${contact.isUser}`);
+                console.log(`  isWAContact: ${contact.isWAContact}`);
+
+                // Try to get phone from id.user if number is not available
+                senderPhone = contact.number || contact.id?.user || msg.author.split('@')[0];
+                const contactName = contact.pushname || contact.name || contact.shortName || '';
 
                 // Format as "Name (Phone)" or just phone if no name
                 if (contactName && senderPhone && contactName !== senderPhone) {
@@ -1539,12 +1552,13 @@ async function processMessage(msg, groupName, groupId) {
                     senderName = contactName || msg.author.split('@')[0];
                 }
 
-                console.log(`✅ Resolved: ${senderName}`);
+                console.log(`✅ Final result: ${senderName}\n`);
             } catch (e) {
                 // Fallback: use author ID
                 senderPhone = msg.author.split('@')[0];
                 senderName = senderPhone;
-                console.log(`⚠️ getContactById failed, using ID: ${senderName}`);
+                console.log(`⚠️ getContactById failed: ${e.message}`);
+                console.log(`   Using ID as fallback: ${senderName}\n`);
             }
         } else {
             senderPhone = 'Unknown';
