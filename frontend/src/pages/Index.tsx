@@ -358,8 +358,8 @@ const Index = () => {
           </Button>
         </div>
       </header>
-      <div className="flex-1 grid grid-cols-12">
-        <div className="col-span-3 overflow-hidden">
+      <div className="flex-1 grid grid-cols-12 overflow-hidden">
+        <div className="col-span-3 h-full">
           <GroupList
             groups={transformedGroups}
             selectedGroupId={selectedGroupId || ""}
@@ -369,13 +369,13 @@ const Index = () => {
             translateMode={translateMode}
           />
         </div>
-        <div className="col-span-6">
+        <div className="col-span-6 h-full">
           <ChatView
             messages={transformedMessages}
             groupName={selectedGroupName}
           />
         </div>
-        <div className="col-span-3">
+        <div className="col-span-3 h-full">
           <AnalyticsPanel
             analytics={analytics}
             translateMode={translateMode}
