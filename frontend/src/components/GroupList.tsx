@@ -35,7 +35,7 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
 
   return (
     <div className="h-full border-r border-border bg-card flex flex-col">
-      <div className="p-4 border-b border-border space-y-3">
+      <div className="p-4 border-b border-border space-y-3 flex-shrink-0">
         <h2 className="text-lg font-semibold text-foreground">
           {translateMode ? "群组聊天" : "Group Chats"}
         </h2>
@@ -52,7 +52,7 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
           </Button>
         </form>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         {groups.map((group) => (
           <div
             key={group.id}
