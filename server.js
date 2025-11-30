@@ -77,6 +77,36 @@ if (!fs.existsSync(DATA_DIR)) {
     console.log(`📁 Created data directory: ${DATA_DIR}`);
 }
 
+// Config file path - use volume in production for persistence
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+
+// Migrate config to volume if needed (Railway)
+if (process.env.RAILWAY_ENVIRONMENT) {
+    const localConfigPath = path.join(__dirname, 'config.json');
+    if (fs.existsSync(localConfigPath) && !fs.existsSync(CONFIG_PATH)) {
+        console.log('📋 Migrating config.json to persistent volume...');
+        fs.copyFileSync(localConfigPath, CONFIG_PATH);
+    }
+}
+
+// Reload config from persistent location
+try {
+    const configFile = fs.readFileSync(CONFIG_PATH, 'utf8');
+    config = JSON.parse(configFile);
+    console.log(`📋 Loaded config from: ${CONFIG_PATH}`);
+} catch (error) {
+    // Config doesn't exist in volume, use default and save
+    config = {
+        groups: ["Army"],
+        checkInterval: 60000,
+        messageLimit: 15,
+        detectJoinsLeaves: true,
+        port: 3000
+    };
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    console.log(`📋 Created new config at: ${CONFIG_PATH}`);
+}
+
 // Initialize SQLite database
 const dbPath = path.join(DATA_DIR, 'whatsapp_analytics.db');
 console.log(`📊 Database path: ${dbPath}`);
@@ -294,11 +324,10 @@ app.post('/api/auth/logout', async (req, res) => {
         groupInfoStore.clear();
         console.log('✓ Monitored groups cleared');
 
-        // Update config.json to remove all groups
-        const configPath = path.join(__dirname, 'config.json');
-        const currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // Update config.json to remove all groups (use CONFIG_PATH for persistence)
+        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         currentConfig.groups = [];
-        fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2));
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
         console.log('✓ Config file cleared');
 
         // Logout from WhatsApp
@@ -863,13 +892,12 @@ app.post('/api/groups', async (req, res) => {
             isFirstRun: true
         });
 
-        // Update config.json
-        const configPath = path.join(__dirname, 'config.json');
-        const currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // Update config.json (use CONFIG_PATH for persistence)
+        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 
         if (!currentConfig.groups.includes(group.name)) {
             currentConfig.groups.push(group.name);
-            fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2));
+            fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
         }
 
         // Immediately check for messages in this new group
@@ -919,11 +947,10 @@ app.delete('/api/groups/:groupId', async (req, res) => {
         monitoredGroups.delete(groupId);
         groupInfoStore.delete(groupId);
 
-        // Update config.json to remove the group
-        const configPath = path.join(__dirname, 'config.json');
-        const currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // Update config.json to remove the group (use CONFIG_PATH for persistence)
+        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         currentConfig.groups = currentConfig.groups.filter(g => g !== groupName);
-        fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2));
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
 
         console.log(`🗑️  Stopped monitoring group: "${groupName}"`);
 
@@ -1558,17 +1585,20 @@ async function processMessage(msg, groupName, groupId) {
             const timestampISO = timestamp.toISOString();
             const eventDate = timestampISO.substring(0, 10); // YYYY-MM-DD
 
-            // Delete previous CERTIFICATE event for this member on this date
+            // Use phone number as member_id for deduplication (not WhatsApp ID)
+            const memberIdForCert = senderPhone || senderId;
+
+            // Delete previous CERTIFICATE event for this member (by phone) on this date
             db.run(`
                 DELETE FROM events WHERE group_id = ? AND member_id = ? AND type = 'CERTIFICATE' AND date = ?
-            `, [groupId, senderId, eventDate], () => {
-                // Insert new CERTIFICATE event
+            `, [groupId, memberIdForCert, eventDate], () => {
+                // Insert new CERTIFICATE event with phone number as member_id
                 db.run(`
                     INSERT INTO events (group_id, group_name, member_id, member_name, type, timestamp, date)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                `, [groupId, groupName, senderId, senderName, 'CERTIFICATE', timestampISO, eventDate]);
+                `, [groupId, groupName, memberIdForCert, senderName, 'CERTIFICATE', timestampISO, eventDate]);
 
-                console.log(`📜 Certificate recorded: ${senderName} in ${groupName} on ${eventDate}`);
+                console.log(`📜 Certificate recorded: ${senderName} (${memberIdForCert}) in ${groupName} on ${eventDate}`);
 
                 // Broadcast certificate event
                 broadcast({
@@ -1576,7 +1606,7 @@ async function processMessage(msg, groupName, groupId) {
                     event: {
                         groupId: groupId,
                         groupName: groupName,
-                        memberId: senderId,
+                        memberId: memberIdForCert,
                         memberName: senderName,
                         type: 'CERTIFICATE',
                         timestamp: timestampISO
