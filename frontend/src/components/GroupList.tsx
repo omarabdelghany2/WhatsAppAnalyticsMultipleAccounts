@@ -52,7 +52,7 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
           </Button>
         </form>
       </div>
-      <div className="flex-1 overflow-y-scroll min-h-0 max-h-full">
+      <div className="flex-1 overflow-y-scroll min-h-0 max-h-full" style={{ overflowY: 'scroll' }}>
         {groups.map((group) => (
           <div
             key={group.id}
