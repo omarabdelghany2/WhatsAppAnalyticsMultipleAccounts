@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "build": "cd frontend && npm install && npm run build",
-    "railway:build": "npm install && rm -rf frontend/dist frontend/node_modules/.vite && cd frontend && npm run build",
+    "railway:build": "npm install && rm -rf frontend/dist frontend/node_modules/.vite && npm run build",
     "railway:start": "node server.js"
   },
   "dependencies": {
