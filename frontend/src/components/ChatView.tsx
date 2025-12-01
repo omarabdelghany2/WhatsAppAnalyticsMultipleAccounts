@@ -18,7 +18,8 @@ interface ChatViewProps {
 }
 
 export function ChatView({ messages, groupName }: ChatViewProps) {
-  const [translatedMessages, setTranslatedMessages] = useState<Set<string>>(new Set());
+  const [translatedMessages, setTranslatedMessages] = useState<Map<string, string>>(new Map());
+  const [translatingMessages, setTranslatingMessages] = useState<Set<string>>(new Set());
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
@@ -45,18 +46,55 @@ export function ChatView({ messages, groupName }: ChatViewProps) {
     }
   }, []);
 
-  const handleTranslateMessage = (messageId: string) => {
-    setTranslatedMessages(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(messageId)) {
-        newSet.delete(messageId);
+  const handleTranslateMessage = async (messageId: string, messageContent: string) => {
+    // If already translated, toggle it off
+    if (translatedMessages.has(messageId)) {
+      setTranslatedMessages(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(messageId);
+        return newMap;
+      });
+      return;
+    }
+
+    // Mark as translating
+    setTranslatingMessages(prev => new Set(prev).add(messageId));
+
+    try {
+      // Call backend translation API
+      const response = await fetch('/api/translate-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messageId: messageId,
+          text: messageContent
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Store the translation
+        setTranslatedMessages(prev => {
+          const newMap = new Map(prev);
+          newMap.set(messageId, data.translated);
+          return newMap;
+        });
       } else {
-        newSet.add(messageId);
-        // TODO: Call backend API to translate this message
-        // await fetch('/api/translate', { method: 'POST', body: JSON.stringify({ messageId }) });
+        console.error('Translation failed:', data.error);
       }
-      return newSet;
-    });
+    } catch (error) {
+      console.error('Translation error:', error);
+    } finally {
+      // Remove from translating set
+      setTranslatingMessages(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(messageId);
+        return newSet;
+      });
+    }
   };
 
   return (
@@ -71,34 +109,44 @@ export function ChatView({ messages, groupName }: ChatViewProps) {
           className="h-full overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200"
         >
           <div className="space-y-4">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className="flex gap-2 items-start justify-start"
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 opacity-0 hover:opacity-100 transition-opacity"
-                  onClick={() => handleTranslateMessage(message.id)}
+            {messages.map((message) => {
+              const translation = translatedMessages.get(message.id);
+              const isTranslating = translatingMessages.has(message.id);
+
+              return (
+                <div
+                  key={message.id}
+                  className="flex gap-2 items-start justify-start"
                 >
-                  <Languages className="h-4 w-4" />
-                </Button>
-                <div className="max-w-[70%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
-                  <p className="text-xs font-semibold mb-1 opacity-70">{message.sender}</p>
-                  <p className="text-sm break-words">
-                    {message.content}
-                    {translatedMessages.has(message.id) && (
-                      <span className="block mt-2 pt-2 border-t border-current/20 italic opacity-90">
-                        {/* TODO: Show translated text from API response */}
-                        [Individual translation will appear here]
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-xs mt-1 opacity-60">{message.timestamp}</p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 opacity-0 hover:opacity-100 transition-opacity"
+                    onClick={() => handleTranslateMessage(message.id, message.content)}
+                    disabled={isTranslating}
+                  >
+                    <Languages className={cn("h-4 w-4", isTranslating && "animate-pulse")} />
+                  </Button>
+                  <div className="max-w-[70%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
+                    <p className="text-xs font-semibold mb-1 opacity-70">{message.sender}</p>
+                    <p className="text-sm break-words">
+                      {message.content}
+                      {isTranslating && (
+                        <span className="block mt-2 pt-2 border-t border-current/20 italic opacity-90 text-xs">
+                          ⏳ Translating...
+                        </span>
+                      )}
+                      {translation && (
+                        <span className="block mt-2 pt-2 border-t border-current/20 italic opacity-90">
+                          🇨🇳 {translation}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs mt-1 opacity-60">{message.timestamp}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

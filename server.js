@@ -7,6 +7,7 @@ const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const sqlite3 = require('sqlite3').verbose();
+const translate = require('@vitalets/google-translate-api');
 
 // Configuration will be loaded from DATA_DIR below
 let config;
@@ -710,6 +711,40 @@ app.get('/api/search', (req, res) => {
             hasMore: rows.length === limit
         });
     });
+});
+
+// Translate single message (Arabic to Chinese)
+app.post('/api/translate-message', async (req, res) => {
+    try {
+        const { messageId, text } = req.body;
+
+        if (!text) {
+            return res.status(400).json({
+                success: false,
+                error: 'Text is required'
+            });
+        }
+
+        console.log(`🔄 Translating message ${messageId}: ${text.substring(0, 50)}...`);
+
+        // Translate from Arabic to Simplified Chinese
+        const result = await translate(text, { from: 'ar', to: 'zh-CN' });
+
+        console.log(`✅ Translation complete: ${result.text.substring(0, 50)}...`);
+
+        res.json({
+            success: true,
+            messageId: messageId,
+            original: text,
+            translated: result.text
+        });
+    } catch (error) {
+        console.error('Translation error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
 });
 
 // Get statistics
