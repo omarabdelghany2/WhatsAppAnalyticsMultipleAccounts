@@ -672,6 +672,169 @@ app.post('/api/auth/logout', async (req, res) => {
     }
 });
 
+// ============================================
+// PER-USER WHATSAPP ENDPOINTS
+// ============================================
+
+// Initialize WhatsApp client for logged-in user
+app.post('/api/whatsapp/init', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+
+        // Check if session record exists, create if not
+        db.get('SELECT * FROM whatsapp_sessions WHERE user_id = ?', [userId], async (err, session) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Database error'
+                });
+            }
+
+            // Create session record if it doesn't exist
+            if (!session) {
+                db.run(
+                    'INSERT INTO whatsapp_sessions (user_id, session_id, is_authenticated) VALUES (?, ?, ?)',
+                    [userId, `session_${userId}_${Date.now()}`, 0],
+                    (err) => {
+                        if (err) {
+                            console.error('Error creating session:', err);
+                        }
+                    }
+                );
+            }
+
+            // Initialize WhatsApp client for this user
+            try {
+                await initClientForUser(userId);
+
+                res.json({
+                    success: true,
+                    message: 'WhatsApp client initialization started',
+                    userId: userId
+                });
+            } catch (error) {
+                console.error(`Error initializing client for user ${userId}:`, error);
+                res.status(500).json({
+                    success: false,
+                    error: 'Failed to initialize WhatsApp client'
+                });
+            }
+        });
+    } catch (error) {
+        console.error('Error in /api/whatsapp/init:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Get QR code for logged-in user
+app.get('/api/whatsapp/qr', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+
+    // Check if client is ready
+    if (userClientReady.get(userId)) {
+        return res.json({
+            success: true,
+            authenticated: true,
+            message: 'WhatsApp already authenticated'
+        });
+    }
+
+    // Check for QR code
+    const qrCode = userQRCodes.get(userId);
+    const authStatus = userAuthStatus.get(userId) || 'not_initialized';
+
+    if (!qrCode) {
+        return res.json({
+            success: false,
+            authenticated: false,
+            qr: null,
+            authStatus: authStatus,
+            message: authStatus === 'not_initialized'
+                ? 'Please initialize WhatsApp client first'
+                : 'QR code not yet generated. Please wait...'
+        });
+    }
+
+    res.json({
+        success: true,
+        authenticated: false,
+        qr: qrCode,
+        authStatus: authStatus,
+        message: 'Scan this QR code with WhatsApp'
+    });
+});
+
+// Get WhatsApp status for logged-in user
+app.get('/api/whatsapp/status', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+
+    res.json({
+        success: true,
+        authenticated: userClientReady.get(userId) || false,
+        authStatus: userAuthStatus.get(userId) || 'not_initialized',
+        hasQR: userQRCodes.has(userId),
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Disconnect WhatsApp (but keep account logged in)
+app.post('/api/whatsapp/logout', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+
+        console.log(`🚪 Disconnecting WhatsApp for user ${userId}...`);
+
+        // Get the client
+        const userClient = whatsappClients.get(userId);
+
+        if (userClient) {
+            // Destroy the client
+            await userClient.destroy();
+            console.log(`✓ WhatsApp client destroyed for user ${userId}`);
+        }
+
+        // Remove from maps
+        whatsappClients.delete(userId);
+        userClientReady.delete(userId);
+        userQRCodes.delete(userId);
+        userAuthStatus.delete(userId);
+        userMonitoredGroups.delete(userId);
+
+        // Delete session files
+        const sessionPath = path.join(DATA_DIR, '.wwebjs_auth', `user_${userId}`);
+        if (fs.existsSync(sessionPath)) {
+            try {
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+                console.log(`✓ Session files deleted for user ${userId}`);
+            } catch (error) {
+                console.error(`Error deleting session files for user ${userId}:`, error);
+            }
+        }
+
+        // Update database
+        db.run(`
+            UPDATE whatsapp_sessions
+            SET is_authenticated = 0, phone_number = NULL
+            WHERE user_id = ?
+        `, [userId]);
+
+        res.json({
+            success: true,
+            message: 'WhatsApp disconnected successfully (account still logged in)'
+        });
+    } catch (error) {
+        console.error('Error during WhatsApp logout:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to disconnect WhatsApp'
+        });
+    }
+});
+
 // Get all groups being monitored
 app.get('/api/groups', (req, res) => {
     const groups = Array.from(groupInfoStore.values());
