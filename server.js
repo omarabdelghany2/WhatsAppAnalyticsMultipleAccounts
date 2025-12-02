@@ -1671,37 +1671,42 @@ async function initClientForUser(userId) {
 
     // Clean up any leftover Chromium lock files from previous crashes
     // Recursively find and remove all SingletonLock files
-    function removeLockFilesRecursively(dir) {
+    console.log(`🔍 Searching for lock files in: ${authPath}`);
+
+    function removeLockFilesRecursively(dir, depth = 0) {
         let removed = 0;
         try {
             if (fs.existsSync(dir)) {
                 const items = fs.readdirSync(dir);
+                console.log(`${'  '.repeat(depth)}📁 Checking directory: ${dir} (${items.length} items)`);
+
                 for (const item of items) {
                     const fullPath = path.join(dir, item);
                     try {
                         const stat = fs.statSync(fullPath);
                         if (stat.isDirectory()) {
-                            removed += removeLockFilesRecursively(fullPath);
+                            removed += removeLockFilesRecursively(fullPath, depth + 1);
                         } else if (item === 'SingletonLock') {
+                            console.log(`${'  '.repeat(depth)}🔒 Found lock file: ${fullPath}`);
                             fs.unlinkSync(fullPath);
                             removed++;
-                            console.log(`🧹 Removed: ${fullPath}`);
+                            console.log(`${'  '.repeat(depth)}🧹 Removed: ${fullPath}`);
                         }
                     } catch (e) {
-                        // Skip files we can't access
+                        console.log(`${'  '.repeat(depth)}⚠️  Error accessing ${fullPath}:`, e.message);
                     }
                 }
+            } else {
+                console.log(`⚠️  Directory does not exist: ${dir}`);
             }
         } catch (e) {
-            // Skip directories we can't access
+            console.log(`❌ Error reading directory ${dir}:`, e.message);
         }
         return removed;
     }
 
     const cleanedLocks = removeLockFilesRecursively(authPath);
-    if (cleanedLocks > 0) {
-        console.log(`✅ Cleaned up ${cleanedLocks} Chromium lock file(s) for user ${userId}`);
-    }
+    console.log(`🧹 Lock file cleanup complete. Removed ${cleanedLocks} file(s) for user ${userId}`);
 
     const userClient = new Client({
         authStrategy: new LocalAuth({
