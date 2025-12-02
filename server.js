@@ -1237,6 +1237,10 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
 
         console.log(`✅ User ${userId} added group "${group.name}" to monitoring`);
 
+        // Immediately check messages for this new group
+        const groupData = userMonitoredGroups.get(userId).get(groupId);
+        await checkMessagesInGroup(userId, userClient, groupId, groupData);
+
         // Broadcast to WebSocket clients
         broadcast({
             type: 'group_added',
@@ -1670,6 +1674,8 @@ async function initClientForUser(userId) {
             console.log(`⚠️  No groups configured for user ${userId}`);
         } else {
             console.log(`🔄 Starting monitoring for user ${userId}...\n`);
+            // Start monitoring loop for this user
+            startMonitoringForUser(userId, userClient);
         }
     });
 
@@ -1887,6 +1893,247 @@ async function cacheGroupMembersForUser(userId, groupId, userClient) {
         console.log(`✅ Cached ${membersMap.size} members for group (user ${userId})`);
     } catch (error) {
         console.error(`❌ Error caching members for user ${userId}:`, error.message);
+    }
+}
+
+// ============================================
+// PER-USER MONITORING SYSTEM
+// ============================================
+
+// Map to store monitoring intervals per user
+const userMonitoringIntervals = new Map();
+
+function startMonitoringForUser(userId, userClient) {
+    // Clear any existing interval for this user
+    if (userMonitoringIntervals.has(userId)) {
+        clearInterval(userMonitoringIntervals.get(userId));
+    }
+
+    // Start checking immediately
+    checkMessagesForUser(userId, userClient);
+
+    // Then check every 60 seconds
+    const interval = setInterval(() => {
+        checkMessagesForUser(userId, userClient);
+    }, CHECK_INTERVAL);
+
+    userMonitoringIntervals.set(userId, interval);
+    console.log(`⏰ Monitoring started for user ${userId} (checking every ${CHECK_INTERVAL / 1000}s)`);
+}
+
+async function checkMessagesForUser(userId, userClient) {
+    const userGroups = userMonitoredGroups.get(userId);
+    if (!userGroups || userGroups.size === 0) {
+        return;
+    }
+
+    for (const [groupId, groupInfo] of userGroups) {
+        await checkMessagesInGroup(userId, userClient, groupId, groupInfo);
+    }
+}
+
+async function checkMessagesInGroup(userId, userClient, groupId, groupInfo) {
+    const timestamp = new Date().toLocaleString();
+    console.log(`[${timestamp}] User ${userId} - Checking ${groupInfo.name}...`);
+
+    try {
+        const chats = await userClient.getChats();
+        const group = chats.find(chat => chat.id._serialized === groupId);
+
+        if (!group) {
+            console.error(`❌ User ${userId} - Group ${groupInfo.name} not found`);
+            return;
+        }
+
+        // Check for member changes (joins/leaves)
+        if (DETECT_JOINS_LEAVES && group.participants) {
+            const currentMembers = new Set(group.participants.map(p => p.id._serialized));
+
+            // Detect joins
+            for (const memberId of currentMembers) {
+                if (!groupInfo.previousMembers.has(memberId) && !groupInfo.isFirstRun) {
+                    const event = await createEventForUser(userId, userClient, memberId, 'JOIN', groupInfo.name, groupId);
+                    if (event) {
+                        console.log(`🟢 User ${userId} - ${event.memberName} joined ${groupInfo.name}`);
+                        broadcast({ type: 'event', event: event });
+                    }
+                }
+            }
+
+            // Detect leaves
+            for (const memberId of groupInfo.previousMembers) {
+                if (!currentMembers.has(memberId) && !groupInfo.isFirstRun) {
+                    const event = await createEventForUser(userId, userClient, memberId, 'LEAVE', groupInfo.name, groupId);
+                    if (event) {
+                        console.log(`🔴 User ${userId} - ${event.memberName} left ${groupInfo.name}`);
+                        broadcast({ type: 'event', event: event });
+                    }
+                }
+            }
+
+            groupInfo.previousMembers = currentMembers;
+        }
+
+        // Fetch and process messages
+        const messages = await group.fetchMessages({ limit: MESSAGE_LIMIT });
+
+        // Detect new messages
+        const newMessages = [];
+        for (const msg of messages) {
+            const msgId = msg.id._serialized;
+            if (!groupInfo.previousMessageIds.has(msgId)) {
+                newMessages.push(msg);
+                groupInfo.previousMessageIds.add(msgId);
+            }
+        }
+
+        if (newMessages.length > 0 || groupInfo.isFirstRun) {
+            const processedMessages = [];
+
+            for (const msg of messages) {
+                const processed = await processMessageForUser(userId, userClient, msg, groupInfo.name, groupId);
+                if (processed) {
+                    processedMessages.push(processed);
+                }
+            }
+
+            // Save messages to database with user_id
+            const insertStmt = db.prepare(`
+                INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+            for (const msg of processedMessages) {
+                insertStmt.run(msg.id, userId, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
+            }
+
+            insertStmt.finalize();
+
+            if (!groupInfo.isFirstRun) {
+                console.log(`🆕 User ${userId} - ${newMessages.length} new message(s) in ${groupInfo.name}`);
+
+                // Broadcast new messages
+                for (const msg of newMessages) {
+                    const processed = await processMessageForUser(userId, userClient, msg, groupInfo.name, groupId);
+                    if (processed) {
+                        broadcast({ type: 'message', message: processed });
+                    }
+                }
+            } else {
+                console.log(`✅ User ${userId} - Loaded ${processedMessages.length} messages from ${groupInfo.name}`);
+            }
+
+            groupInfo.isFirstRun = false;
+        } else {
+            console.log(`   User ${userId} - No new messages in ${groupInfo.name}`);
+        }
+
+        // Clean up old message IDs
+        if (groupInfo.previousMessageIds.size > 100) {
+            const idsArray = Array.from(groupInfo.previousMessageIds);
+            groupInfo.previousMessageIds = new Set(idsArray.slice(-100));
+        }
+
+    } catch (error) {
+        console.error(`❌ User ${userId} - Error checking ${groupInfo.name}:`, error.message);
+    }
+}
+
+async function processMessageForUser(userId, userClient, msg, groupName, groupId) {
+    try {
+        const timestamp = new Date(msg.timestamp * 1000);
+        const cachedMembers = groupMembersCache.get(groupId);
+
+        // Handle notification messages (joins, leaves, voice messages)
+        if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
+            // Check if it's a voice/audio message (certificate)
+            if (msg.type === 'ptt' || msg.type === 'audio') {
+                const event = await createEventForUser(userId, userClient, msg.from, 'CERTIFICATE', groupName, groupId);
+                if (event) {
+                    console.log(`🎤 User ${userId} - ${event.memberName} recorded certificate in ${groupName}`);
+                    broadcast({ type: 'event', event: event });
+                }
+            }
+            return null;
+        }
+
+        // Regular messages
+        const contact = await msg.getContact();
+        let senderName = contact.pushname || contact.name || contact.verifiedName;
+        let senderId = contact.id._serialized;
+
+        // Try to get normalized ID and name from cache
+        if (cachedMembers && cachedMembers.has(senderId)) {
+            const cached = cachedMembers.get(senderId);
+            senderName = cached.name;
+        }
+
+        return {
+            id: msg.id._serialized,
+            groupId: groupId,
+            groupName: groupName,
+            sender: senderName,
+            senderId: senderId,
+            message: msg.body,
+            timestamp: timestamp.toISOString()
+        };
+    } catch (error) {
+        console.error(`❌ Error processing message for user ${userId}:`, error.message);
+        return null;
+    }
+}
+
+async function createEventForUser(userId, userClient, memberId, eventType, groupName, groupId) {
+    try {
+        const contact = await userClient.getContactById(memberId);
+        const memberPhone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || memberId.split('@')[0]);
+        const memberName = contact.pushname || contact.name || contact.verifiedName || memberPhone;
+
+        const timestamp = new Date();
+        const eventDate = timestamp.toISOString().split('T')[0];
+
+        const event = {
+            groupId: groupId,
+            groupName: groupName,
+            memberId: memberPhone,
+            memberName: memberName,
+            type: eventType,
+            timestamp: timestamp.toISOString(),
+            date: eventDate
+        };
+
+        // Save to database with user_id
+        if (eventType === 'JOIN') {
+            db.run(`DELETE FROM events WHERE user_id = ? AND group_id = ? AND member_id = ? AND type = 'JOIN'`, [userId, groupId, memberPhone]);
+            db.run(`
+                INSERT INTO events (user_id, group_id, group_name, member_id, member_name, type, timestamp, date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [userId, event.groupId, event.groupName, event.memberId, event.memberName, event.type, event.timestamp, eventDate]);
+        } else if (eventType === 'LEAVE') {
+            db.run(`DELETE FROM events WHERE user_id = ? AND group_id = ? AND member_id = ? AND type = 'LEAVE'`, [userId, groupId, memberPhone]);
+            db.run(`
+                INSERT INTO events (user_id, group_id, group_name, member_id, member_name, type, timestamp, date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [userId, event.groupId, event.groupName, event.memberId, event.memberName, event.type, event.timestamp, eventDate]);
+        } else if (eventType === 'CERTIFICATE') {
+            // Check if certificate already exists for today
+            db.get(`
+                SELECT * FROM events
+                WHERE user_id = ? AND group_id = ? AND member_id = ? AND type = 'CERTIFICATE' AND date = ?
+            `, [userId, groupId, memberPhone, eventDate], (err, row) => {
+                if (!err && !row) {
+                    db.run(`
+                        INSERT INTO events (user_id, group_id, group_name, member_id, member_name, type, timestamp, date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    `, [userId, event.groupId, event.groupName, event.memberId, event.memberName, event.type, event.timestamp, eventDate]);
+                }
+            });
+        }
+
+        return event;
+    } catch (error) {
+        console.error(`❌ Error creating event for user ${userId}:`, error.message);
+        return null;
     }
 }
 
