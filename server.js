@@ -2204,10 +2204,71 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         const timestamp = new Date(msg.timestamp * 1000);
         const cachedMembers = groupMembersCache.get(groupId);
 
-        // Handle notification messages (joins, leaves) - skip saving these as messages
+        // Handle notification messages (joins, leaves)
         if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
-            // These are handled separately by the member tracking system
-            return null;
+            let notificationMessage = msg.body || 'Group notification';
+            let eventType = null;
+            let memberId = null;
+            let memberName = 'Unknown';
+
+            console.log(`📋 User ${userId} - Notification details:`, {
+                type: msg.type,
+                subtype: msg.subtype,
+                body: msg.body,
+                recipientIds: msg.recipientIds
+            });
+
+            // Try to detect if it's a join or leave event
+            if (msg.recipientIds && msg.recipientIds.length > 0) {
+                memberId = msg.recipientIds[0];
+
+                // Get member name and phone
+                try {
+                    const contact = await userClient.getContactById(memberId);
+                    const memberPhone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || memberId.split('@')[0]);
+                    memberName = contact.pushname || contact.name || contact.verifiedName || memberPhone;
+                } catch (e) {
+                    memberName = memberId.split('@')[0];
+                    console.log(`⚠️  User ${userId} - Failed to get contact for member ${memberId}:`, e.message);
+                }
+
+                // Determine if it's a join or leave based on notification subtype
+                if (msg.subtype === 'add' || msg.subtype === 'invite' || msg.subtype === 'group_invite_link') {
+                    eventType = 'JOIN';
+                    if (!msg.body || msg.body.trim() === '') {
+                        if (msg.subtype === 'group_invite_link') {
+                            notificationMessage = `${memberName} joined via group link`;
+                        } else {
+                            notificationMessage = `${memberName} joined`;
+                        }
+                    }
+                } else if (msg.subtype === 'remove' || msg.subtype === 'leave') {
+                    eventType = 'LEAVE';
+                    if (!msg.body || msg.body.trim() === '') {
+                        notificationMessage = `${memberName} left`;
+                    }
+                }
+
+                // Save to events table if we detected the event type
+                if (eventType && memberId) {
+                    const event = await createEventForUser(userId, userClient, memberId, eventType, groupName, groupId);
+                    if (event) {
+                        console.log(`📝 User ${userId} - Detected ${eventType} event: ${memberName} in ${groupName}`);
+                        broadcast({ type: 'event', event: event });
+                    }
+                }
+            }
+
+            // Return the notification as a message for display in chat
+            return {
+                id: msg.id._serialized,
+                groupId: groupId,
+                groupName: groupName,
+                sender: 'System',
+                senderId: '',
+                message: notificationMessage || 'Group notification',
+                timestamp: timestamp.toISOString()
+            };
         }
 
         // Get message sender info
