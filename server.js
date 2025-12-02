@@ -1670,14 +1670,37 @@ async function initClientForUser(userId) {
     }
 
     // Clean up any leftover Chromium lock files from previous crashes
-    const lockFile = path.join(authPath, 'session', 'SingletonLock');
-    if (fs.existsSync(lockFile)) {
+    // Recursively find and remove all SingletonLock files
+    function removeLockFilesRecursively(dir) {
+        let removed = 0;
         try {
-            fs.unlinkSync(lockFile);
-            console.log(`🧹 Cleaned up stale Chromium lock file for user ${userId}`);
+            if (fs.existsSync(dir)) {
+                const items = fs.readdirSync(dir);
+                for (const item of items) {
+                    const fullPath = path.join(dir, item);
+                    try {
+                        const stat = fs.statSync(fullPath);
+                        if (stat.isDirectory()) {
+                            removed += removeLockFilesRecursively(fullPath);
+                        } else if (item === 'SingletonLock') {
+                            fs.unlinkSync(fullPath);
+                            removed++;
+                            console.log(`🧹 Removed: ${fullPath}`);
+                        }
+                    } catch (e) {
+                        // Skip files we can't access
+                    }
+                }
+            }
         } catch (e) {
-            console.log(`⚠️  Could not remove stale lock file for user ${userId}:`, e.message);
+            // Skip directories we can't access
         }
+        return removed;
+    }
+
+    const cleanedLocks = removeLockFilesRecursively(authPath);
+    if (cleanedLocks > 0) {
+        console.log(`✅ Cleaned up ${cleanedLocks} Chromium lock file(s) for user ${userId}`);
     }
 
     const userClient = new Client({
