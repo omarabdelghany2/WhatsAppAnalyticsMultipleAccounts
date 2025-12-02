@@ -1469,7 +1469,9 @@ async function initClient() {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials'
         ]
     };
 
@@ -1651,7 +1653,9 @@ async function initClientForUser(userId) {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials'
         ]
     };
 
@@ -1678,22 +1682,33 @@ async function initClientForUser(userId) {
         try {
             if (fs.existsSync(dir)) {
                 const items = fs.readdirSync(dir);
-                console.log(`${'  '.repeat(depth)}📁 Checking directory: ${dir} (${items.length} items)`);
+                if (depth === 0 || items.length > 0) {
+                    console.log(`${'  '.repeat(depth)}📁 Checking directory: ${dir} (${items.length} items)`);
+                }
 
                 for (const item of items) {
                     const fullPath = path.join(dir, item);
+
+                    // Remove any file starting with "Singleton" (lock, socket, cookie, etc.)
+                    if (item.startsWith('Singleton')) {
+                        try {
+                            console.log(`${'  '.repeat(depth)}🔒 Found Chromium file: ${fullPath}`);
+                            fs.unlinkSync(fullPath);
+                            removed++;
+                            console.log(`${'  '.repeat(depth)}🧹 Removed: ${fullPath}`);
+                        } catch (e) {
+                            console.log(`${'  '.repeat(depth)}⚠️  Failed to remove ${item}:`, e.message);
+                        }
+                        continue;
+                    }
+
                     try {
                         const stat = fs.statSync(fullPath);
                         if (stat.isDirectory()) {
                             removed += removeLockFilesRecursively(fullPath, depth + 1);
-                        } else if (item === 'SingletonLock') {
-                            console.log(`${'  '.repeat(depth)}🔒 Found lock file: ${fullPath}`);
-                            fs.unlinkSync(fullPath);
-                            removed++;
-                            console.log(`${'  '.repeat(depth)}🧹 Removed: ${fullPath}`);
                         }
                     } catch (e) {
-                        console.log(`${'  '.repeat(depth)}⚠️  Error accessing ${fullPath}:`, e.message);
+                        // Skip files we can't access
                     }
                 }
             } else {
