@@ -8,6 +8,8 @@ const http = require('http');
 const WebSocket = require('ws');
 const sqlite3 = require('sqlite3').verbose();
 const { translate } = require('@vitalets/google-translate-api');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 // Configuration will be loaded from DATA_DIR below
 let config;
@@ -59,6 +61,34 @@ if (!fs.existsSync(DATA_DIR)) {
     console.log(`📁 Created data directory: ${DATA_DIR}`);
 }
 
+// JWT Configuration
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_EXPIRES_IN = '7d'; // Token expires in 7 days
+
+// JWT Authentication Middleware
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        return res.status(401).json({
+            success: false,
+            error: 'Access token required'
+        });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({
+                success: false,
+                error: 'Invalid or expired token'
+            });
+        }
+        req.user = user; // { userId, username, email }
+        next();
+    });
+}
+
 // Config file path - use volume in production for persistence
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -105,17 +135,44 @@ const db = new sqlite3.Database(dbPath, (err) => {
 // Create tables if they don't exist
 function initializeDatabase() {
     db.serialize(() => {
+        // Users table (for multi-tenant support)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // WhatsApp sessions table (maps users to their WhatsApp clients)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                session_id TEXT UNIQUE NOT NULL,
+                phone_number TEXT,
+                is_authenticated BOOLEAN DEFAULT 0,
+                last_connected DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
         // Messages table
         db.run(`
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
+                user_id INTEGER,
                 group_id TEXT NOT NULL,
                 group_name TEXT NOT NULL,
                 sender TEXT NOT NULL,
                 sender_id TEXT,
                 message TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
 
@@ -123,6 +180,7 @@ function initializeDatabase() {
         db.run(`
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
                 group_id TEXT NOT NULL,
                 group_name TEXT NOT NULL,
                 member_id TEXT NOT NULL,
@@ -130,7 +188,8 @@ function initializeDatabase() {
                 type TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 date TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
 
@@ -162,9 +221,37 @@ function initializeDatabase() {
             }
         });
 
+        // Add user_id column to existing messages table if it doesn't exist
+        db.run(`
+            ALTER TABLE messages ADD COLUMN user_id INTEGER
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding user_id column to messages:', err);
+            } else if (!err) {
+                console.log('✅ Added user_id column to messages table');
+            }
+        });
+
+        // Add user_id column to existing events table if it doesn't exist
+        db.run(`
+            ALTER TABLE events ADD COLUMN user_id INTEGER
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding user_id column to events:', err);
+            } else if (!err) {
+                console.log('✅ Added user_id column to events table');
+            }
+        });
+
         // Create indexes for better query performance
+        db.run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_user_id ON whatsapp_sessions(user_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_session_id ON whatsapp_sessions(session_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(group_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_events_user_id ON events(user_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_group_id ON events(group_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_date ON events(date DESC)`);
@@ -213,6 +300,197 @@ app.get('/api/health', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+// ============================================
+// USER AUTHENTICATION ENDPOINTS
+// ============================================
+
+// User Registration
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { username, email, password } = req.body;
+
+        // Validation
+        if (!username || !email || !password) {
+            return res.status(400).json({
+                success: false,
+                error: 'Username, email, and password are required'
+            });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                error: 'Password must be at least 6 characters long'
+            });
+        }
+
+        // Check if user already exists
+        db.get('SELECT id FROM users WHERE email = ? OR username = ?', [email, username], async (err, existingUser) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Database error'
+                });
+            }
+
+            if (existingUser) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Username or email already exists'
+                });
+            }
+
+            // Hash password
+            const passwordHash = await bcrypt.hash(password, 10);
+
+            // Create user
+            db.run(
+                'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
+                [username, email, passwordHash],
+                function(err) {
+                    if (err) {
+                        console.error('Error creating user:', err);
+                        return res.status(500).json({
+                            success: false,
+                            error: 'Failed to create user'
+                        });
+                    }
+
+                    const userId = this.lastID;
+
+                    // Generate JWT token
+                    const token = jwt.sign(
+                        { userId, username, email },
+                        JWT_SECRET,
+                        { expiresIn: JWT_EXPIRES_IN }
+                    );
+
+                    console.log(`✅ User registered: ${username} (${email})`);
+
+                    res.status(201).json({
+                        success: true,
+                        token,
+                        user: {
+                            id: userId,
+                            username,
+                            email
+                        }
+                    });
+                }
+            );
+        });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Registration failed'
+        });
+    }
+});
+
+// User Login
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // Validation
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                error: 'Email and password are required'
+            });
+        }
+
+        // Find user
+        db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Database error'
+                });
+            }
+
+            if (!user) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Invalid email or password'
+                });
+            }
+
+            // Verify password
+            const isValidPassword = await bcrypt.compare(password, user.password_hash);
+
+            if (!isValidPassword) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Invalid email or password'
+                });
+            }
+
+            // Generate JWT token
+            const token = jwt.sign(
+                { userId: user.id, username: user.username, email: user.email },
+                JWT_SECRET,
+                { expiresIn: JWT_EXPIRES_IN }
+            );
+
+            console.log(`✅ User logged in: ${user.username} (${user.email})`);
+
+            res.json({
+                success: true,
+                token,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Login failed'
+        });
+    }
+});
+
+// Verify Token (check if user is authenticated)
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+    db.get('SELECT id, username, email, created_at FROM users WHERE id = ?', [req.user.userId], (err, user) => {
+        if (err) {
+            console.error('Database error:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                createdAt: user.created_at
+            }
+        });
+    });
+});
+
+// ============================================
+// WHATSAPP AUTHENTICATION ENDPOINTS
+// ============================================
 
 // Get QR code for authentication
 app.get('/api/auth/qr', async (req, res) => {
