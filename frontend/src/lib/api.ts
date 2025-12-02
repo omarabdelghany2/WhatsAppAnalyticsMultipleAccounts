@@ -135,6 +135,15 @@ export const api = {
   async logout() {
     const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
       method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async logoutWhatsApp() {
+    const response = await fetch(`${API_BASE_URL}/api/whatsapp/logout`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
     });
     return response.json();
   },

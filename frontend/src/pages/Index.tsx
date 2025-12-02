@@ -6,7 +6,7 @@ import { ChatView } from "@/components/ChatView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Languages, LogOut } from "lucide-react";
+import { Languages, LogOut, Power } from "lucide-react";
 import { api, wsClient, Message, Event } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -22,6 +22,7 @@ const Index = () => {
     return today.toISOString().split('T')[0];
   });
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [logoutType, setLogoutType] = useState<'account' | 'whatsapp'>('account');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -276,7 +277,7 @@ const Index = () => {
     }
   };
 
-  const handleLogout = async () => {
+  const handleAccountLogout = async () => {
     try {
       // Call backend logout to clear all data and disconnect WhatsApp
       await api.logout();
@@ -285,7 +286,7 @@ const Index = () => {
       wsClient.disconnect();
 
       // Clear local storage
-      localStorage.removeItem('auth_token');
+      localStorage.removeItem('token');
 
       // Navigate to login
       navigate('/login');
@@ -298,6 +299,28 @@ const Index = () => {
       const errorMessage = error instanceof Error ? error.message : 'Failed to logout';
       toast({
         title: "Logout error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleWhatsAppLogout = async () => {
+    try {
+      // Call backend to disconnect WhatsApp only
+      await api.logoutWhatsApp();
+
+      // Navigate to WhatsApp connect page
+      navigate('/whatsapp-connect');
+
+      toast({
+        title: "WhatsApp disconnected",
+        description: "You can reconnect by scanning the QR code",
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to disconnect WhatsApp';
+      toast({
+        title: "Disconnect error",
         description: errorMessage,
         variant: "destructive",
       });
@@ -402,13 +425,28 @@ const Index = () => {
           </Button>
           <ThemeToggle />
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setLogoutType('whatsapp');
+              setShowLogoutDialog(true);
+            }}
+            className="gap-2"
+          >
+            <Power className="h-4 w-4" />
+            {translateMode ? "断开WhatsApp" : "Disconnect WhatsApp"}
+          </Button>
+          <Button
             variant="destructive"
             size="sm"
-            onClick={() => setShowLogoutDialog(true)}
+            onClick={() => {
+              setLogoutType('account');
+              setShowLogoutDialog(true);
+            }}
             className="gap-2"
           >
             <LogOut className="h-4 w-4" />
-            {translateMode ? "登出" : "Logout"}
+            {translateMode ? "退出账户" : "Logout from Account"}
           </Button>
         </div>
       </header>
@@ -446,18 +484,31 @@ const Index = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="text-destructive">
-              {translateMode ? "确认登出" : "Confirm Logout"}
+              {logoutType === 'account'
+                ? (translateMode ? "确认退出账户" : "Confirm Account Logout")
+                : (translateMode ? "确认断开WhatsApp" : "Confirm WhatsApp Disconnect")
+              }
             </DialogTitle>
             <DialogDescription className="space-y-2 pt-2">
               <p className="font-semibold">
-                {translateMode
-                  ? "您确定要登出吗？"
-                  : "Are you sure you want to logout?"}
+                {logoutType === 'account'
+                  ? (translateMode
+                      ? "您确定要退出账户吗？"
+                      : "Are you sure you want to logout from your account?")
+                  : (translateMode
+                      ? "您确定要断开WhatsApp吗？"
+                      : "Are you sure you want to disconnect WhatsApp?")
+                }
               </p>
               <p className="text-muted-foreground">
-                {translateMode
-                  ? "如果您登出，系统将停止监听所有群组消息，并且您将失去当前的聊天连接。"
-                  : "If you logout, the system will stop listening to all group messages and you will lose the current chat connection."}
+                {logoutType === 'account'
+                  ? (translateMode
+                      ? "如果您退出账户，系统将停止监听所有群组消息，清除所有数据，并断开WhatsApp连接。您需要重新登录。"
+                      : "If you logout from your account, the system will stop listening to all group messages, clear all data, and disconnect WhatsApp. You will need to login again.")
+                  : (translateMode
+                      ? "如果您断开WhatsApp，您需要重新扫描二维码才能重新连接。您的账户将保持登录状态。"
+                      : "If you disconnect WhatsApp, you will need to scan the QR code again to reconnect. Your account will remain logged in.")
+                }
               </p>
             </DialogDescription>
           </DialogHeader>
@@ -472,10 +523,17 @@ const Index = () => {
               variant="destructive"
               onClick={() => {
                 setShowLogoutDialog(false);
-                handleLogout();
+                if (logoutType === 'account') {
+                  handleAccountLogout();
+                } else {
+                  handleWhatsAppLogout();
+                }
               }}
             >
-              {translateMode ? "是的，登出" : "Yes, Logout"}
+              {logoutType === 'account'
+                ? (translateMode ? "是的，退出账户" : "Yes, Logout from Account")
+                : (translateMode ? "是的，断开WhatsApp" : "Yes, Disconnect WhatsApp")
+              }
             </Button>
           </DialogFooter>
         </DialogContent>
