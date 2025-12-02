@@ -122,6 +122,8 @@ export default function WhatsAppConnect() {
         return "Click below to connect your WhatsApp";
       case "initializing":
         return "Initializing WhatsApp connection...";
+      case "restoring":
+        return "Restoring previous WhatsApp session...";
       case "qr_ready":
         return "Scan the QR code with WhatsApp";
       case "authenticating":
@@ -139,6 +141,9 @@ export default function WhatsAppConnect() {
     switch (authStatus) {
       case "qr_ready":
         return <Smartphone className="h-8 w-8 text-green-500" />;
+      case "restoring":
+      case "initializing":
+        return <Loader2 className="h-8 w-8 animate-spin text-blue-500" />;
       case "authenticating":
       case "authenticated":
         return <CheckCircle2 className="h-8 w-8 text-green-500" />;

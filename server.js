@@ -606,12 +606,51 @@ app.get('/api/whatsapp/qr', authenticateToken, (req, res) => {
 });
 
 // Get WhatsApp status for logged-in user
-app.get('/api/whatsapp/status', authenticateToken, (req, res) => {
+app.get('/api/whatsapp/status', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
 
+    // Check if client is already in memory
+    if (userClientReady.get(userId)) {
+        return res.json({
+            success: true,
+            authenticated: true,
+            authStatus: 'authenticated',
+            hasQR: false,
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    // Check if session files exist on disk (from previous session)
+    const sessionPath = path.join(DATA_DIR, '.wwebjs_auth', `user_${userId}`);
+    const sessionExists = fs.existsSync(sessionPath);
+
+    if (sessionExists && !whatsappClients.has(userId)) {
+        // Session exists but client not initialized - auto-restore it
+        console.log(`🔄 Auto-restoring WhatsApp session for user ${userId}...`);
+
+        try {
+            // Initialize client in background (don't wait for it)
+            initClientForUser(userId).catch(err => {
+                console.error(`Failed to auto-restore session for user ${userId}:`, err);
+            });
+
+            return res.json({
+                success: true,
+                authenticated: false,
+                authStatus: 'restoring',
+                hasQR: false,
+                message: 'Restoring previous session...',
+                timestamp: new Date().toISOString()
+            });
+        } catch (error) {
+            console.error(`Error auto-restoring session for user ${userId}:`, error);
+        }
+    }
+
+    // No session files, needs to scan QR
     res.json({
         success: true,
-        authenticated: userClientReady.get(userId) || false,
+        authenticated: false,
         authStatus: userAuthStatus.get(userId) || 'not_initialized',
         hasQR: userQRCodes.has(userId),
         timestamp: new Date().toISOString()
