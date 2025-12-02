@@ -2207,8 +2207,8 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         // Debug log ALL message types to understand what we're receiving
         console.log(`🔍 User ${userId} - Message type: ${msg.type}, hasMedia: ${msg.hasMedia}, body: "${msg.body?.substring(0, 50) || 'empty'}", subtype: ${msg.subtype}`);
 
-        // Handle notification messages (joins, leaves)
-        if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
+        // Handle notification messages (joins, leaves) - including gp2 type
+        if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification' || msg.type === 'gp2') {
             let notificationMessage = msg.body || 'Group notification';
             let eventType = null;
             let memberId = null;
@@ -2550,8 +2550,8 @@ async function processMessage(msg, groupName, groupId) {
             console.log(`⚠️ No cached members for group ${groupId} - cache may need refresh`);
         }
 
-        // Handle notification messages (joins, leaves, etc.)
-        if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
+        // Handle notification messages (joins, leaves, etc.) - including gp2 type
+        if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification' || msg.type === 'gp2') {
             // Extract notification details - use body as default message
             let notificationMessage = msg.body || 'Group notification';
             let eventType = null;
