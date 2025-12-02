@@ -2296,14 +2296,40 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             }
         }
 
-        // Save all messages (including voice messages) to database
+        // Determine message content based on type
+        let messageContent = msg.body;
+        if (!messageContent || messageContent.trim() === '') {
+            // Handle different media types
+            switch (msg.type) {
+                case 'ptt':
+                case 'audio':
+                    messageContent = '[Voice Message]';
+                    break;
+                case 'image':
+                    messageContent = '[Image]';
+                    break;
+                case 'video':
+                    messageContent = '[Video]';
+                    break;
+                case 'document':
+                    messageContent = '[Document]';
+                    break;
+                case 'sticker':
+                    messageContent = '[Sticker]';
+                    break;
+                default:
+                    messageContent = '[Media]';
+            }
+        }
+
+        // Save all messages to database
         return {
             id: msg.id._serialized,
             groupId: groupId,
             groupName: groupName,
             sender: senderName,
             senderId: senderId,
-            message: msg.body || '[Voice Message]',
+            message: messageContent,
             timestamp: timestamp.toISOString()
         };
     } catch (error) {
@@ -2689,9 +2715,34 @@ async function processMessage(msg, groupName, groupId) {
             });
         }
 
-        let body = msg.body || '';
-        if (msg.hasMedia) {
-            body = body || `<${msg.type}>`;
+        // Determine message content based on type
+        let body = msg.body;
+        if (!body || body.trim() === '') {
+            // Handle different media types
+            switch (msg.type) {
+                case 'ptt':
+                case 'audio':
+                    body = '[Voice Message]';
+                    break;
+                case 'image':
+                    body = '[Image]';
+                    break;
+                case 'video':
+                    body = '[Video]';
+                    break;
+                case 'document':
+                    body = '[Document]';
+                    break;
+                case 'sticker':
+                    body = '[Sticker]';
+                    break;
+                default:
+                    if (msg.hasMedia) {
+                        body = '[Media]';
+                    } else {
+                        body = '';
+                    }
+            }
         }
 
         // Format sender with phone number if available
