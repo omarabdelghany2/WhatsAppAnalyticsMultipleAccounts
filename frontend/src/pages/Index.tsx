@@ -67,6 +67,43 @@ const Index = () => {
     enabled: !!groupsData?.groups?.length,
   });
 
+  // Check WhatsApp connection status periodically
+  useEffect(() => {
+    const checkWhatsAppStatus = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        const response = await fetch('/api/whatsapp/status', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+
+        // If WhatsApp is disconnected, redirect to QR page
+        if (!data.authenticated || data.authStatus === 'disconnected' || data.authStatus === 'not_initialized') {
+          toast({
+            title: "WhatsApp Disconnected",
+            description: "Please scan the QR code again to reconnect.",
+            variant: "destructive",
+          });
+          navigate('/whatsapp-connect');
+        }
+      } catch (error) {
+        console.error('Error checking WhatsApp status:', error);
+      }
+    };
+
+    // Check immediately
+    checkWhatsAppStatus();
+
+    // Check every 15 seconds
+    const interval = setInterval(checkWhatsAppStatus, 15000);
+
+    return () => clearInterval(interval);
+  }, [navigate, toast]);
+
   // Set initial selected group
   useEffect(() => {
     if (groupsData?.groups && groupsData.groups.length > 0 && !selectedGroupId) {
@@ -151,16 +188,33 @@ const Index = () => {
       });
     };
 
+    const handleDisconnected = (data: any) => {
+      console.log('⚠️ WhatsApp disconnected:', data);
+
+      toast({
+        title: "WhatsApp Disconnected",
+        description: "Redirecting to reconnect...",
+        variant: "destructive",
+      });
+
+      // Redirect to QR page after a short delay
+      setTimeout(() => {
+        navigate('/whatsapp-connect');
+      }, 2000);
+    };
+
     wsClient.on('message', handleMessage);
     wsClient.on('event', handleEvent);
     wsClient.on('group_added', handleGroupAdded);
+    wsClient.on('disconnected', handleDisconnected);
 
     return () => {
       wsClient.off('message', handleMessage);
       wsClient.off('event', handleEvent);
       wsClient.off('group_added', handleGroupAdded);
+      wsClient.off('disconnected', handleDisconnected);
     };
-  }, [toast, refetchMessages, refetchAllMessages, queryClient]);
+  }, [toast, refetchMessages, refetchAllMessages, queryClient, navigate]);
 
   // Handle component cleanup
   useEffect(() => {

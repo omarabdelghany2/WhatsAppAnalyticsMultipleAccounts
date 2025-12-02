@@ -1687,11 +1687,19 @@ async function initClientForUser(userId) {
     userClient.on('disconnected', (reason) => {
         console.log(`⚠️  User ${userId} disconnected:`, reason);
         userClientReady.set(userId, false);
+        userAuthStatus.set(userId, 'disconnected');
+
+        // Update database
+        db.run(`
+            UPDATE whatsapp_sessions
+            SET is_authenticated = 0
+            WHERE user_id = ?
+        `, [userId]);
 
         broadcast({
             type: 'disconnected',
             userId: userId,
-            message: 'WhatsApp disconnected'
+            message: 'WhatsApp disconnected. Please scan QR code again.'
         });
     });
 
