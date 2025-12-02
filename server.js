@@ -673,8 +673,24 @@ app.post('/api/whatsapp/logout', authenticateToken, async (req, res) => {
 });
 
 // Get all groups being monitored
-app.get('/api/groups', (req, res) => {
-    const groups = Array.from(groupInfoStore.values());
+app.get('/api/groups', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const userGroups = userMonitoredGroups.get(userId);
+
+    if (!userGroups) {
+        return res.json({
+            success: true,
+            groups: [],
+            count: 0
+        });
+    }
+
+    const groups = Array.from(userGroups.values()).map(g => ({
+        id: g.id,
+        name: g.name,
+        memberCount: g.previousMembers ? g.previousMembers.size : 0
+    }));
+
     res.json({
         success: true,
         groups: groups,
@@ -683,11 +699,13 @@ app.get('/api/groups', (req, res) => {
 });
 
 // Get all members of a specific group with their phone numbers
-app.get('/api/groups/:groupId/members', async (req, res) => {
+app.get('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
     try {
         const groupId = req.params.groupId;
+        const userId = req.user.userId;
 
-        if (!client || !client.info) {
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
             return res.status(503).json({
                 success: false,
                 error: 'WhatsApp client not ready'
@@ -695,7 +713,7 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         }
 
         // Get the group chat
-        const chat = await client.getChatById(groupId);
+        const chat = await userClient.getChatById(groupId);
 
         if (!chat.isGroup) {
             return res.status(400).json({
@@ -714,7 +732,7 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         const members = await Promise.all(
             participants.map(async (participant) => {
                 try {
-                    const contact = await client.getContactById(participant.id._serialized);
+                    const contact = await userClient.getContactById(participant.id._serialized);
                     const phone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || participant.id.user);
                     const name = contact.pushname || contact.name || contact.verifiedName || phone;
 
@@ -1138,9 +1156,10 @@ app.get('/api/stats', (req, res) => {
 });
 
 // Add a new group to monitor
-app.post('/api/groups', async (req, res) => {
+app.post('/api/groups', authenticateToken, async (req, res) => {
     try {
         const { name } = req.body;
+        const userId = req.user.userId;
 
         if (!name || typeof name !== 'string' || name.trim() === '') {
             return res.status(400).json({
@@ -1151,16 +1170,25 @@ app.post('/api/groups', async (req, res) => {
 
         const groupName = name.trim();
 
-        // Check if WhatsApp client is ready
-        if (!isClientReady || !client) {
+        // Check if user's WhatsApp client is ready
+        const userClient = whatsappClients.get(userId);
+        const isReady = userClientReady.get(userId);
+
+        if (!isReady || !userClient) {
             return res.status(503).json({
                 success: false,
-                error: 'WhatsApp client is not ready. Please wait.'
+                error: 'WhatsApp client is not ready. Please connect WhatsApp first.'
             });
         }
 
-        // Check if group is already being monitored
-        const existingGroup = Array.from(groupInfoStore.values()).find(
+        // Get user's monitored groups
+        const userGroups = userMonitoredGroups.get(userId);
+        if (!userGroups) {
+            userMonitoredGroups.set(userId, new Map());
+        }
+
+        // Check if group is already being monitored by this user
+        const existingGroup = Array.from(userGroups.values()).find(
             g => g.name.toLowerCase() === groupName.toLowerCase()
         );
 
@@ -1171,8 +1199,8 @@ app.post('/api/groups', async (req, res) => {
             });
         }
 
-        // Search for the group in WhatsApp
-        const chats = await client.getChats();
+        // Search for the group in user's WhatsApp
+        const chats = await userClient.getChats();
         const group = chats.find(chat =>
             chat.isGroup && chat.name && chat.name.toLowerCase().includes(groupName.toLowerCase())
         );
@@ -1184,7 +1212,7 @@ app.post('/api/groups', async (req, res) => {
             });
         }
 
-        // Add group to monitoring
+        // Add group to user's monitoring
         const groupId = group.id._serialized;
         const memberCount = group.participants ? group.participants.length : 0;
         const members = group.participants ? group.participants.map(p => p.id._serialized) : [];
@@ -1195,9 +1223,7 @@ app.post('/api/groups', async (req, res) => {
             memberCount: memberCount
         };
 
-        groupInfoStore.set(groupId, groupInfo);
-
-        monitoredGroups.set(groupId, {
+        userMonitoredGroups.get(userId).set(groupId, {
             name: group.name,
             id: groupId,
             previousMessageIds: new Set(),
@@ -1205,17 +1231,7 @@ app.post('/api/groups', async (req, res) => {
             isFirstRun: true
         });
 
-        // Update config.json (use CONFIG_PATH for persistence)
-        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-
-        if (!currentConfig.groups.includes(group.name)) {
-            currentConfig.groups.push(group.name);
-            fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
-        }
-
-        // Immediately check for messages in this new group
-        const groupData = monitoredGroups.get(groupId);
-        await checkMessages(groupId, groupData);
+        console.log(`✅ User ${userId} added group "${group.name}" to monitoring`);
 
         // Broadcast to WebSocket clients
         broadcast({
@@ -1241,12 +1257,21 @@ app.post('/api/groups', async (req, res) => {
 });
 
 // DELETE /api/groups/:groupId - Stop monitoring a group
-app.delete('/api/groups/:groupId', async (req, res) => {
+app.delete('/api/groups/:groupId', authenticateToken, async (req, res) => {
     try {
         const { groupId } = req.params;
+        const userId = req.user.userId;
 
-        // Check if group exists in monitored groups
-        const groupData = groupInfoStore.get(groupId);
+        const userGroups = userMonitoredGroups.get(userId);
+        if (!userGroups) {
+            return res.status(404).json({
+                success: false,
+                error: 'No groups being monitored'
+            });
+        }
+
+        // Check if group exists in user's monitored groups
+        const groupData = userGroups.get(groupId);
         if (!groupData) {
             return res.status(404).json({
                 success: false,
@@ -1256,16 +1281,10 @@ app.delete('/api/groups/:groupId', async (req, res) => {
 
         const groupName = groupData.name;
 
-        // Remove from memory stores
-        monitoredGroups.delete(groupId);
-        groupInfoStore.delete(groupId);
+        // Remove from user's memory stores
+        userGroups.delete(groupId);
 
-        // Update config.json to remove the group (use CONFIG_PATH for persistence)
-        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        currentConfig.groups = currentConfig.groups.filter(g => g !== groupName);
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
-
-        console.log(`🗑️  Stopped monitoring group: "${groupName}"`);
+        console.log(`🗑️  User ${userId} stopped monitoring group: "${groupName}"`);
 
         res.json({
             success: true,
