@@ -877,15 +877,16 @@ app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
 });
 
 // Get events (joins/leaves) from all groups
-app.get('/api/events', (req, res) => {
+app.get('/api/events', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const limit = parseInt(req.query.limit) || 100;
     const offset = parseInt(req.query.offset) || 0;
     const date = req.query.date; // Optional: filter by specific date (YYYY-MM-DD) or date range (YYYY-MM-DD,YYYY-MM-DD)
     const memberId = req.query.memberId; // Optional: filter by member phone number
 
     // Build WHERE clause dynamically
-    let whereConditions = [];
-    let params = [];
+    let whereConditions = ['user_id = ?'];
+    let params = [userId];
 
     if (date) {
         // Check if date is a range (contains comma)
@@ -905,7 +906,7 @@ app.get('/api/events', (req, res) => {
         params.push(memberId);
     }
 
-    const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+    const whereClause = 'WHERE ' + whereConditions.join(' AND ');
 
     // Get total count with filters
     db.get(`SELECT COUNT(*) as total FROM events ${whereClause}`, params, (err, countRow) => {
@@ -940,28 +941,30 @@ app.get('/api/events', (req, res) => {
 });
 
 // Get events from a specific group
-app.get('/api/events/:groupId', (req, res) => {
+app.get('/api/events/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const groupId = req.params.groupId;
     const limit = parseInt(req.query.limit) || 100;
     const offset = parseInt(req.query.offset) || 0;
 
-    const groupInfo = groupInfoStore.get(groupId);
+    const userGroups = userMonitoredGroups.get(userId);
+    const groupInfo = userGroups?.get(groupId);
 
-    // Get total count for this group
-    db.get('SELECT COUNT(*) as total FROM events WHERE group_id = ?', [groupId], (err, countRow) => {
+    // Get total count for this group and user
+    db.get('SELECT COUNT(*) as total FROM events WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, countRow) => {
         if (err) {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        // Get paginated events for this group
+        // Get paginated events for this group and user
         db.all(`
             SELECT id, group_id as groupId, group_name as groupName, member_id as memberId,
                    member_name as memberName, type, timestamp, date
             FROM events
-            WHERE group_id = ?
+            WHERE group_id = ? AND user_id = ?
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?
-        `, [groupId, limit, offset], (err, rows) => {
+        `, [groupId, userId, limit, offset], (err, rows) => {
             if (err) {
                 return res.status(500).json({ success: false, error: err.message });
             }
@@ -980,7 +983,8 @@ app.get('/api/events/:groupId', (req, res) => {
 });
 
 // Search messages
-app.get('/api/search', (req, res) => {
+app.get('/api/search', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const query = req.query.q || '';
     const groupId = req.query.groupId;
     const limit = parseInt(req.query.limit) || 100;
@@ -996,25 +1000,25 @@ app.get('/api/search', (req, res) => {
     let sqlQuery, params;
 
     if (groupId) {
-        // Search in specific group
+        // Search in specific group for this user
         sqlQuery = `
             SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
-            WHERE group_id = ? AND (message LIKE ? OR sender LIKE ?)
+            WHERE user_id = ? AND group_id = ? AND (message LIKE ? OR sender LIKE ?)
             ORDER BY timestamp DESC
             LIMIT ?
         `;
-        params = [groupId, searchPattern, searchPattern, limit];
+        params = [userId, groupId, searchPattern, searchPattern, limit];
     } else {
-        // Search in all groups
+        // Search in all user's groups
         sqlQuery = `
             SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
-            WHERE message LIKE ? OR sender LIKE ?
+            WHERE user_id = ? AND (message LIKE ? OR sender LIKE ?)
             ORDER BY timestamp DESC
             LIMIT ?
         `;
-        params = [searchPattern, searchPattern, limit];
+        params = [userId, searchPattern, searchPattern, limit];
     }
 
     db.all(sqlQuery, params, (err, rows) => {
@@ -1067,20 +1071,21 @@ app.post('/api/translate-message', async (req, res) => {
 });
 
 // Get statistics
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const stats = {
         groups: [],
         totalMessages: 0,
         totalEvents: 0
     };
 
-    // Get total counts
-    db.get('SELECT COUNT(*) as total FROM messages', (err, msgCountRow) => {
+    // Get total counts for this user
+    db.get('SELECT COUNT(*) as total FROM messages WHERE user_id = ?', [userId], (err, msgCountRow) => {
         if (err) {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        db.get('SELECT COUNT(*) as total FROM events', (err, eventCountRow) => {
+        db.get('SELECT COUNT(*) as total FROM events WHERE user_id = ?', [userId], (err, eventCountRow) => {
             if (err) {
                 return res.status(500).json({ success: false, error: err.message });
             }
@@ -1088,11 +1093,9 @@ app.get('/api/stats', (req, res) => {
             stats.totalMessages = msgCountRow.total;
             stats.totalEvents = eventCountRow.total;
 
-            // Process each group
-            const groupIds = Array.from(groupInfoStore.keys());
-            let processed = 0;
-
-            if (groupIds.length === 0) {
+            // Get user's groups
+            const userGroups = userMonitoredGroups.get(userId);
+            if (!userGroups || userGroups.size === 0) {
                 return res.json({
                     success: true,
                     stats: stats,
@@ -1100,11 +1103,14 @@ app.get('/api/stats', (req, res) => {
                 });
             }
 
-            groupIds.forEach(groupId => {
-                const groupInfo = groupInfoStore.get(groupId);
+            const groupIds = Array.from(userGroups.keys());
+            let processed = 0;
 
-                // Get message count for this group
-                db.get('SELECT COUNT(*) as count FROM messages WHERE group_id = ?', [groupId], (err, msgCount) => {
+            groupIds.forEach(groupId => {
+                const groupInfo = userGroups.get(groupId);
+
+                // Get message count for this group and user
+                db.get('SELECT COUNT(*) as count FROM messages WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, msgCount) => {
                     if (err) {
                         processed++;
                         if (processed === groupIds.length) {
@@ -1113,8 +1119,8 @@ app.get('/api/stats', (req, res) => {
                         return;
                     }
 
-                    // Get event count for this group
-                    db.get('SELECT COUNT(*) as count FROM events WHERE group_id = ?', [groupId], (err, eventCount) => {
+                    // Get event count for this group and user
+                    db.get('SELECT COUNT(*) as count FROM events WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, eventCount) => {
                         if (err) {
                             processed++;
                             if (processed === groupIds.length) {
@@ -1123,15 +1129,15 @@ app.get('/api/stats', (req, res) => {
                             return;
                         }
 
-                        // Get top senders for this group
+                        // Get top senders for this group and user
                         db.all(`
                             SELECT sender as name, COUNT(*) as count
                             FROM messages
-                            WHERE group_id = ?
+                            WHERE group_id = ? AND user_id = ?
                             GROUP BY sender
                             ORDER BY count DESC
                             LIMIT 5
-                        `, [groupId], (err, topSenders) => {
+                        `, [groupId, userId], (err, topSenders) => {
                             if (err) topSenders = [];
 
                             stats.groups.push({
@@ -1139,7 +1145,7 @@ app.get('/api/stats', (req, res) => {
                                 name: groupInfo.name,
                                 messageCount: msgCount.count,
                                 eventCount: eventCount.count,
-                                memberCount: groupInfo.memberCount,
+                                memberCount: groupInfo.previousMembers ? groupInfo.previousMembers.size : 0,
                                 topSenders: topSenders || []
                             });
 
