@@ -63,7 +63,7 @@ if (!fs.existsSync(DATA_DIR)) {
 
 // JWT Configuration
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_EXPIRES_IN = '7d'; // Token expires in 7 days
+const JWT_EXPIRES_IN = '1d'; // Token expires in 1 day
 
 // JWT Authentication Middleware
 function authenticateToken(req, res, next) {
@@ -270,12 +270,31 @@ const groupMembersCache = new Map();
 // WebSocket clients
 const wsClients = new Set();
 
-// WhatsApp client
-let client;
-let monitoredGroups = new Map();
-let isClientReady = false;
-let currentQRCode = null;
-let authStatus = 'initializing'; // 'initializing', 'qr_ready', 'authenticating', 'authenticated', 'failed'
+// ============================================
+// MULTI-CLIENT WHATSAPP MANAGEMENT
+// ============================================
+
+// Map of WhatsApp clients per user: userId -> WhatsAppClient
+const whatsappClients = new Map();
+
+// Map of monitored groups per user: userId -> Map(groupId -> groupInfo)
+const userMonitoredGroups = new Map();
+
+// Map of client ready status per user: userId -> boolean
+const userClientReady = new Map();
+
+// Map of QR codes per user: userId -> qrCodeString
+const userQRCodes = new Map();
+
+// Map of authentication status per user: userId -> status
+const userAuthStatus = new Map();
+
+// Legacy single-client variables (for backward compatibility during migration)
+let client; // Will be deprecated
+let monitoredGroups = new Map(); // Will be deprecated
+let isClientReady = false; // Will be deprecated
+let currentQRCode = null; // Will be deprecated
+let authStatus = 'initializing'; // Will be deprecated
 
 console.log('===============================================');
 console.log('   WhatsApp Analytics API Server');
@@ -1496,6 +1515,172 @@ async function initClient() {
     await client.initialize();
 }
 
+// ============================================
+// PER-USER CLIENT INITIALIZATION
+// ============================================
+
+async function initClientForUser(userId) {
+    console.log(`\n🔧 Initializing WhatsApp client for user ${userId}...`);
+
+    // Check if client already exists for this user
+    if (whatsappClients.has(userId)) {
+        console.log(`⚠️  Client already exists for user ${userId}`);
+        return whatsappClients.get(userId);
+    }
+
+    const chromiumPath = findChromiumExecutable();
+    const puppeteerConfig = {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ]
+    };
+
+    // Add executablePath if we found Chromium
+    if (chromiumPath) {
+        puppeteerConfig.executablePath = chromiumPath;
+    }
+
+    // Use per-user session folder
+    const authPath = path.join(DATA_DIR, '.wwebjs_auth', `user_${userId}`);
+    console.log(`🔐 WhatsApp session path for user ${userId}: ${authPath}`);
+
+    // Ensure the directory exists
+    if (!fs.existsSync(authPath)) {
+        fs.mkdirSync(authPath, { recursive: true });
+    }
+
+    // Clean up any leftover Chromium lock files from previous crashes
+    const lockFile = path.join(authPath, 'session', 'SingletonLock');
+    if (fs.existsSync(lockFile)) {
+        try {
+            fs.unlinkSync(lockFile);
+            console.log(`🧹 Cleaned up stale Chromium lock file for user ${userId}`);
+        } catch (e) {
+            console.log(`⚠️  Could not remove stale lock file for user ${userId}:`, e.message);
+        }
+    }
+
+    const userClient = new Client({
+        authStrategy: new LocalAuth({
+            dataPath: authPath,
+            clientId: `user_${userId}` // Unique ID per user
+        }),
+        puppeteer: puppeteerConfig
+    });
+
+    // Initialize storage for this user
+    userMonitoredGroups.set(userId, new Map());
+    userClientReady.set(userId, false);
+    userAuthStatus.set(userId, 'initializing');
+
+    userClient.on('qr', (qr) => {
+        console.log(`\n📱 QR code generated for user ${userId}\n`);
+
+        userQRCodes.set(userId, qr);
+        userAuthStatus.set(userId, 'qr_ready');
+
+        // Broadcast QR code to user's WebSocket connections
+        broadcast({
+            type: 'qr',
+            userId: userId,
+            qr: qr,
+            message: `Scan this QR code with WhatsApp (User ${userId})`
+        });
+    });
+
+    userClient.on('authenticated', () => {
+        console.log(`✅ User ${userId} authenticated!`);
+        userAuthStatus.set(userId, 'authenticating');
+        userQRCodes.delete(userId);
+
+        // Update database
+        db.run(`
+            UPDATE whatsapp_sessions
+            SET is_authenticated = 1, last_connected = datetime('now')
+            WHERE user_id = ?
+        `, [userId]);
+
+        broadcast({
+            type: 'authenticated',
+            userId: userId,
+            message: 'WhatsApp authenticated successfully'
+        });
+    });
+
+    userClient.on('ready', async () => {
+        console.log(`✅ WhatsApp client ready for user ${userId}!\n`);
+        userClientReady.set(userId, true);
+        userAuthStatus.set(userId, 'authenticated');
+
+        broadcast({
+            type: 'ready',
+            userId: userId,
+            message: 'WhatsApp client ready'
+        });
+
+        // Get user's phone number and update database
+        try {
+            const phoneInfo = await userClient.info;
+            const phoneNumber = phoneInfo.wid.user;
+
+            db.run(`
+                UPDATE whatsapp_sessions
+                SET phone_number = ?, is_authenticated = 1, last_connected = datetime('now')
+                WHERE user_id = ?
+            `, [phoneNumber, userId]);
+        } catch (error) {
+            console.error(`Error getting phone number for user ${userId}:`, error);
+        }
+
+        // Initialize groups for this user
+        await initializeGroupsForUser(userId, userClient);
+
+        const userGroups = userMonitoredGroups.get(userId);
+        if (userGroups && userGroups.size === 0) {
+            console.log(`⚠️  No groups configured for user ${userId}`);
+        } else {
+            console.log(`🔄 Starting monitoring for user ${userId}...\n`);
+        }
+    });
+
+    userClient.on('auth_failure', (msg) => {
+        console.error(`❌ Auth failed for user ${userId}:`, msg);
+        userAuthStatus.set(userId, 'failed');
+
+        broadcast({
+            type: 'auth_failure',
+            userId: userId,
+            message: 'Authentication failed: ' + msg
+        });
+    });
+
+    userClient.on('disconnected', (reason) => {
+        console.log(`⚠️  User ${userId} disconnected:`, reason);
+        userClientReady.set(userId, false);
+
+        broadcast({
+            type: 'disconnected',
+            userId: userId,
+            message: 'WhatsApp disconnected'
+        });
+    });
+
+    // Store the client
+    whatsappClients.set(userId, userClient);
+
+    // Initialize the client
+    await userClient.initialize();
+
+    return userClient;
+}
+
 async function initializeGroups() {
     const chats = await client.getChats();
 
@@ -1529,6 +1714,50 @@ async function initializeGroups() {
         } else {
             console.log(`❌ Group "${groupName}" not found`);
         }
+    }
+}
+
+// Per-user group initialization
+async function initializeGroupsForUser(userId, userClient) {
+    console.log(`🔄 Initializing groups for user ${userId}...`);
+
+    try {
+        const chats = await userClient.getChats();
+
+        // Get user's configured groups from database or use default
+        // For now, using GROUP_NAMES from config (can be moved to per-user config later)
+        for (const groupName of GROUP_NAMES) {
+            const group = chats.find(chat =>
+                chat.isGroup && chat.name && chat.name.toLowerCase().includes(groupName.toLowerCase())
+            );
+
+            if (group) {
+                console.log(`✅ Found group for user ${userId}: "${group.name}"`);
+
+                const memberCount = group.participants ? group.participants.length : 0;
+                const members = group.participants ? group.participants.map(p => p.id._serialized) : [];
+
+                // Store in per-user monitored groups
+                const userGroups = userMonitoredGroups.get(userId);
+                userGroups.set(group.id._serialized, {
+                    name: group.name,
+                    id: group.id._serialized,
+                    previousMessageIds: new Set(),
+                    previousMembers: new Set(members),
+                    isFirstRun: true
+                });
+
+                // Cache group members for this user
+                await cacheGroupMembersForUser(userId, group.id._serialized, userClient);
+            } else {
+                console.log(`❌ Group "${groupName}" not found for user ${userId}`);
+            }
+        }
+
+        const userGroups = userMonitoredGroups.get(userId);
+        console.log(`✅ User ${userId} monitoring ${userGroups.size} group(s)`);
+    } catch (error) {
+        console.error(`Error initializing groups for user ${userId}:`, error);
     }
 }
 
@@ -1583,6 +1812,50 @@ async function cacheGroupMembers(groupId) {
         });
     } catch (error) {
         console.error(`❌ Error caching members:`, error.message);
+    }
+}
+
+// Per-user group member caching
+async function cacheGroupMembersForUser(userId, groupId, userClient) {
+    try {
+        console.log(`🔄 Caching members for group ${groupId} (user ${userId})...`);
+
+        const chat = await userClient.getChatById(groupId);
+        if (!chat.isGroup || !chat.participants) {
+            console.log(`⚠️ Not a group or no participants`);
+            return;
+        }
+
+        const membersMap = new Map();
+
+        // Process each participant
+        for (const participant of chat.participants) {
+            try {
+                const contact = await userClient.getContactById(participant.id._serialized);
+                const phone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || participant.id.user);
+                const name = contact.pushname || contact.name || contact.verifiedName || phone;
+
+                membersMap.set(participant.id._serialized, {
+                    name: name,
+                    phone: phone,
+                    isAdmin: participant.isAdmin
+                });
+            } catch (error) {
+                // Fallback: use participant.id.user
+                const phone = participant.id.user;
+                membersMap.set(participant.id._serialized, {
+                    name: phone,
+                    phone: phone,
+                    isAdmin: participant.isAdmin
+                });
+            }
+        }
+
+        // Store in cache (shared cache is fine since member info is the same)
+        groupMembersCache.set(groupId, membersMap);
+        console.log(`✅ Cached ${membersMap.size} members for group (user ${userId})`);
+    } catch (error) {
+        console.error(`❌ Error caching members for user ${userId}:`, error.message);
     }
 }
 
