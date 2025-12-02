@@ -1308,9 +1308,14 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
             }
         });
 
-        // Immediately check messages for this new group
+        // Immediately check messages for this new group (with error handling)
         const groupData = userMonitoredGroups.get(userId).get(groupId);
-        await checkMessagesInGroup(userId, userClient, groupId, groupData);
+        try {
+            await checkMessagesInGroup(userId, userClient, groupId, groupData);
+        } catch (msgError) {
+            console.error(`⚠️  Error checking messages for new group ${group.name}:`, msgError.message);
+            // Don't fail the entire request - group was added successfully
+        }
 
         // Broadcast to WebSocket clients
         broadcast({
@@ -2025,13 +2030,22 @@ function startMonitoringForUser(userId, userClient) {
 }
 
 async function checkMessagesForUser(userId, userClient) {
-    const userGroups = userMonitoredGroups.get(userId);
-    if (!userGroups || userGroups.size === 0) {
-        return;
-    }
+    try {
+        const userGroups = userMonitoredGroups.get(userId);
+        if (!userGroups || userGroups.size === 0) {
+            return;
+        }
 
-    for (const [groupId, groupInfo] of userGroups) {
-        await checkMessagesInGroup(userId, userClient, groupId, groupInfo);
+        for (const [groupId, groupInfo] of userGroups) {
+            try {
+                await checkMessagesInGroup(userId, userClient, groupId, groupInfo);
+            } catch (error) {
+                console.error(`❌ Error checking group ${groupInfo.name} for user ${userId}:`, error.message);
+                // Continue with next group even if this one fails
+            }
+        }
+    } catch (error) {
+        console.error(`❌ Critical error in checkMessagesForUser for user ${userId}:`, error.message);
     }
 }
 

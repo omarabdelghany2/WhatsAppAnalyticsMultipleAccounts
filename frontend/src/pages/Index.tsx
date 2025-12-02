@@ -422,18 +422,6 @@ const Index = () => {
             variant="outline"
             size="sm"
             onClick={() => {
-              setLogoutType('whatsapp');
-              setShowLogoutDialog(true);
-            }}
-            className="gap-2"
-          >
-            <Power className="h-4 w-4" />
-            {translateMode ? "断开WhatsApp" : "Disconnect WhatsApp"}
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
               setLogoutType('account');
               setShowLogoutDialog(true);
             }}
@@ -441,6 +429,18 @@ const Index = () => {
           >
             <LogOut className="h-4 w-4" />
             {translateMode ? "退出账户" : "Logout from Account"}
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              setLogoutType('whatsapp');
+              setShowLogoutDialog(true);
+            }}
+            className="gap-2"
+          >
+            <Power className="h-4 w-4" />
+            {translateMode ? "断开WhatsApp" : "Disconnect WhatsApp"}
           </Button>
         </div>
       </header>
