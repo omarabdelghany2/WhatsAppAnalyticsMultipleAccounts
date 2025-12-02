@@ -113,7 +113,7 @@ try {
 }
 
 // Extract configuration values AFTER loading from volume
-const PORT = config.port || 3000;
+const PORT = process.env.PORT || config.port || 3000;
 const CHECK_INTERVAL = config.checkInterval || 60000;
 const MESSAGE_LIMIT = config.messageLimit || 15;
 const DETECT_JOINS_LEAVES = config.detectJoinsLeaves !== false;
@@ -1983,9 +1983,9 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
 // START SERVER
 // ============================================
 
-server.listen(PORT, () => {
-    console.log(`\n🚀 API Server running on http://localhost:${PORT}`);
-    console.log(`📡 WebSocket available at ws://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🚀 API Server running on http://0.0.0.0:${PORT}`);
+    console.log(`📡 WebSocket available at ws://0.0.0.0:${PORT}`);
     console.log('\nAPI Endpoints:');
     console.log(`  GET  /api/health - Server health check`);
     console.log(`  GET  /api/groups - List monitored groups`);
