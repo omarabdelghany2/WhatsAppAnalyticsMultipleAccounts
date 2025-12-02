@@ -2089,20 +2089,13 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         const timestamp = new Date(msg.timestamp * 1000);
         const cachedMembers = groupMembersCache.get(groupId);
 
-        // Handle notification messages (joins, leaves, voice messages)
+        // Handle notification messages (joins, leaves) - skip saving these as messages
         if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
-            // Check if it's a voice/audio message (certificate)
-            if (msg.type === 'ptt' || msg.type === 'audio') {
-                const event = await createEventForUser(userId, userClient, msg.from, 'CERTIFICATE', groupName, groupId);
-                if (event) {
-                    console.log(`🎤 User ${userId} - ${event.memberName} recorded certificate in ${groupName}`);
-                    broadcast({ type: 'event', event: event });
-                }
-            }
+            // These are handled separately by the member tracking system
             return null;
         }
 
-        // Regular messages
+        // Get message sender info
         const contact = await msg.getContact();
         let senderName = contact.pushname || contact.name || contact.verifiedName;
         let senderId = contact.id._serialized;
@@ -2113,13 +2106,23 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             senderName = cached.name;
         }
 
+        // Check if it's a voice/audio message - create CERTIFICATE event
+        if (msg.type === 'ptt' || msg.type === 'audio') {
+            const event = await createEventForUser(userId, userClient, senderId, 'CERTIFICATE', groupName, groupId);
+            if (event) {
+                console.log(`🎤 User ${userId} - ${event.memberName} recorded certificate in ${groupName}`);
+                broadcast({ type: 'event', event: event });
+            }
+        }
+
+        // Save all messages (including voice messages) to database
         return {
             id: msg.id._serialized,
             groupId: groupId,
             groupName: groupName,
             sender: senderName,
             senderId: senderId,
-            message: msg.body,
+            message: msg.body || '[Voice Message]',
             timestamp: timestamp.toISOString()
         };
     } catch (error) {
