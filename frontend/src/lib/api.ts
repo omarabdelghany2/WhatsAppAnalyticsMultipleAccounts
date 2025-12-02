@@ -3,6 +3,18 @@
 const API_BASE_URL = '';  // Use relative URLs for Railway
 const WS_URL = 'wss://whatsappanalytics-productionn.up.railway.app/ws';
 
+// Helper to get auth headers
+function getAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem('token');
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export interface Message {
   id: string;
   groupId: string;
@@ -40,17 +52,23 @@ export const api = {
   },
 
   async getGroups() {
-    const response = await fetch(`${API_BASE_URL}/api/groups`);
+    const response = await fetch(`${API_BASE_URL}/api/groups`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async getMessages(limit = 100, offset = 0) {
-    const response = await fetch(`${API_BASE_URL}/api/messages?limit=${limit}&offset=${offset}`);
+    const response = await fetch(`${API_BASE_URL}/api/messages?limit=${limit}&offset=${offset}`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async getMessagesByGroup(groupId: string, limit = 100, offset = 0) {
-    const response = await fetch(`${API_BASE_URL}/api/messages/${groupId}?limit=${limit}&offset=${offset}`);
+    const response = await fetch(`${API_BASE_URL}/api/messages/${groupId}?limit=${limit}&offset=${offset}`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
@@ -61,33 +79,39 @@ export const api = {
     });
     if (date) params.append('date', date);
     if (memberId) params.append('memberId', memberId);
-    const response = await fetch(`${API_BASE_URL}/api/events?${params}`);
+    const response = await fetch(`${API_BASE_URL}/api/events?${params}`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async getEventsByGroup(groupId: string, limit = 100, offset = 0) {
-    const response = await fetch(`${API_BASE_URL}/api/events/${groupId}?limit=${limit}&offset=${offset}`);
+    const response = await fetch(`${API_BASE_URL}/api/events/${groupId}?limit=${limit}&offset=${offset}`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async searchMessages(query: string, groupId?: string, limit = 100) {
     const params = new URLSearchParams({ q: query, limit: limit.toString() });
     if (groupId) params.append('groupId', groupId);
-    const response = await fetch(`${API_BASE_URL}/api/search?${params}`);
+    const response = await fetch(`${API_BASE_URL}/api/search?${params}`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async getStats() {
-    const response = await fetch(`${API_BASE_URL}/api/stats`);
+    const response = await fetch(`${API_BASE_URL}/api/stats`, {
+      headers: getAuthHeaders(),
+    });
     return response.json();
   },
 
   async addGroup(name: string) {
     const response = await fetch(`${API_BASE_URL}/api/groups`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ name }),
     });
     return response.json();
@@ -96,6 +120,7 @@ export const api = {
   async deleteGroup(groupId: string) {
     const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}`, {
       method: 'DELETE',
+      headers: getAuthHeaders(),
     });
     return response.json();
   },
