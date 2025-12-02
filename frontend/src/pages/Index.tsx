@@ -279,21 +279,15 @@ const Index = () => {
 
   const handleAccountLogout = async () => {
     try {
-      // Call backend logout to clear all data and disconnect WhatsApp
-      await api.logout();
-
-      // Disconnect WebSocket
-      wsClient.disconnect();
-
-      // Clear local storage
+      // Only clear JWT token - WhatsApp stays connected
       localStorage.removeItem('token');
 
       // Navigate to login
       navigate('/login');
 
       toast({
-        title: "Logged out successfully",
-        description: "All data cleared and WhatsApp connection terminated",
+        title: "Logged out from account",
+        description: "You can login again without scanning QR code",
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to logout';
@@ -307,7 +301,7 @@ const Index = () => {
 
   const handleWhatsAppLogout = async () => {
     try {
-      // Call backend to disconnect WhatsApp only
+      // Call backend to disconnect WhatsApp and clear WhatsApp data
       await api.logoutWhatsApp();
 
       // Navigate to WhatsApp connect page
@@ -315,7 +309,7 @@ const Index = () => {
 
       toast({
         title: "WhatsApp disconnected",
-        description: "You can reconnect by scanning the QR code",
+        description: "You will need to scan QR code again. Your account remains logged in.",
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to disconnect WhatsApp';
@@ -503,11 +497,11 @@ const Index = () => {
               <p className="text-muted-foreground">
                 {logoutType === 'account'
                   ? (translateMode
-                      ? "如果您退出账户，系统将停止监听所有群组消息，清除所有数据，并断开WhatsApp连接。您需要重新登录。"
-                      : "If you logout from your account, the system will stop listening to all group messages, clear all data, and disconnect WhatsApp. You will need to login again.")
+                      ? "如果您退出账户，您需要重新登录。您的WhatsApp连接将保持连接，无需重新扫描二维码。"
+                      : "If you logout from your account, you will need to login again with your email and password. Your WhatsApp connection will remain active - no need to scan QR code again.")
                   : (translateMode
                       ? "如果您断开WhatsApp，您需要重新扫描二维码才能重新连接。您的账户将保持登录状态。"
-                      : "If you disconnect WhatsApp, you will need to scan the QR code again to reconnect. Your account will remain logged in.")
+                      : "If you disconnect WhatsApp, all WhatsApp data will be cleared and you will need to scan the QR code again. Your account will remain logged in.")
                 }
               </p>
             </DialogDescription>
