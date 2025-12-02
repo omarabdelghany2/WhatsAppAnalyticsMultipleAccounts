@@ -2169,13 +2169,18 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
 
         // Get message sender info
         const contact = await msg.getContact();
-        let senderName = contact.pushname || contact.name || contact.verifiedName;
         let senderId = contact.id._serialized;
+        let senderName = contact.pushname || contact.name || contact.verifiedName || contact.number || senderId.split('@')[0] || 'Unknown';
 
         // Try to get normalized ID and name from cache
         if (cachedMembers && cachedMembers.has(senderId)) {
             const cached = cachedMembers.get(senderId);
-            senderName = cached.name;
+            senderName = cached.name || senderName;
+        }
+
+        // Ensure senderName is never null or undefined
+        if (!senderName || senderName === 'undefined') {
+            senderName = senderId.split('@')[0] || 'Unknown';
         }
 
         // Check if it's a voice/audio message - create CERTIFICATE event
