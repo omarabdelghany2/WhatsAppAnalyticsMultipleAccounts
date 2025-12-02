@@ -800,23 +800,25 @@ app.get('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
 });
 
 // Get messages from all groups
-app.get('/api/messages', (req, res) => {
+app.get('/api/messages', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const limit = parseInt(req.query.limit) || 100;
     const offset = parseInt(req.query.offset) || 0;
 
-    // Get total count
-    db.get('SELECT COUNT(*) as total FROM messages', (err, countRow) => {
+    // Get total count for this user
+    db.get('SELECT COUNT(*) as total FROM messages WHERE user_id = ?', [userId], (err, countRow) => {
         if (err) {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        // Get paginated messages (sorted by timestamp DESC - newest first)
+        // Get paginated messages for this user (sorted by timestamp DESC - newest first)
         db.all(`
             SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
+            WHERE user_id = ?
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?
-        `, [limit, offset], (err, rows) => {
+        `, [userId, limit, offset], (err, rows) => {
             if (err) {
                 return res.status(500).json({ success: false, error: err.message });
             }
@@ -834,27 +836,29 @@ app.get('/api/messages', (req, res) => {
 });
 
 // Get messages from a specific group
-app.get('/api/messages/:groupId', (req, res) => {
+app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
     const groupId = req.params.groupId;
     const limit = parseInt(req.query.limit) || 100;
     const offset = parseInt(req.query.offset) || 0;
 
-    const groupInfo = groupInfoStore.get(groupId);
+    const userGroups = userMonitoredGroups.get(userId);
+    const groupInfo = userGroups?.get(groupId);
 
-    // Get total count for this group
-    db.get('SELECT COUNT(*) as total FROM messages WHERE group_id = ?', [groupId], (err, countRow) => {
+    // Get total count for this group and user
+    db.get('SELECT COUNT(*) as total FROM messages WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, countRow) => {
         if (err) {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        // Get paginated messages for this group
+        // Get paginated messages for this group and user
         db.all(`
             SELECT id, group_id as groupId, group_name as groupName, sender, sender_id as senderId, message, timestamp
             FROM messages
-            WHERE group_id = ?
+            WHERE group_id = ? AND user_id = ?
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?
-        `, [groupId, limit, offset], (err, rows) => {
+        `, [groupId, userId, limit, offset], (err, rows) => {
             if (err) {
                 return res.status(500).json({ success: false, error: err.message });
             }

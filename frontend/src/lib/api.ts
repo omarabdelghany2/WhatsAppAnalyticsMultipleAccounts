@@ -125,6 +125,13 @@ export const api = {
     return response.json();
   },
 
+  async getGroupMembers(groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}/members`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
   async logout() {
     const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
       method: 'POST',

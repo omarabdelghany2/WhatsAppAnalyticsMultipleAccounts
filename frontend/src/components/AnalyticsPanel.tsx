@@ -8,6 +8,7 @@ import { UserPlus, UserMinus, Users, MessageSquare, TrendingUp, CalendarIcon, Aw
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import ExcelJS from 'exceljs';
+import { api } from "@/lib/api";
 
 interface AnalyticsData {
   totalMembers: number;
@@ -67,8 +68,7 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
     if (type === 'MEMBERS' && groupId) {
       setLoadingMembers(true);
       try {
-        const response = await fetch(`/api/groups/${groupId}/members`);
-        const data = await response.json();
+        const data = await api.getGroupMembers(groupId);
         if (data.success) {
           setMembers(data.members);
         }
