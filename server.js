@@ -193,6 +193,19 @@ function initializeDatabase() {
             )
         `);
 
+        // Monitored groups table (stores which groups each user is monitoring)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS monitored_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                group_id TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(user_id, group_id)
+            )
+        `);
+
         // Add date column to existing events table if it doesn't exist
         db.run(`
             ALTER TABLE events ADD COLUMN date TEXT
@@ -256,6 +269,8 @@ function initializeDatabase() {
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_date ON events(date DESC)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_date_member ON events(date, member_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_monitored_groups_user_id ON monitored_groups(user_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_monitored_groups_group_id ON monitored_groups(group_id)`);
 
         console.log('✅ Database tables initialized');
     });
@@ -1280,7 +1295,17 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
             isFirstRun: true
         });
 
-        console.log(`✅ User ${userId} added group "${group.name}" to monitoring`);
+        // Save group to database for persistence
+        db.run(`
+            INSERT OR IGNORE INTO monitored_groups (user_id, group_id, group_name)
+            VALUES (?, ?, ?)
+        `, [userId, groupId, group.name], (err) => {
+            if (err) {
+                console.error(`Error saving group to database:`, err);
+            } else {
+                console.log(`✅ User ${userId} added group "${group.name}" to monitoring (saved to database)`);
+            }
+        });
 
         // Immediately check messages for this new group
         const groupData = userMonitoredGroups.get(userId).get(groupId);
@@ -1337,7 +1362,17 @@ app.delete('/api/groups/:groupId', authenticateToken, async (req, res) => {
         // Remove from user's memory stores
         userGroups.delete(groupId);
 
-        console.log(`🗑️  User ${userId} stopped monitoring group: "${groupName}"`);
+        // Remove from database
+        db.run(`
+            DELETE FROM monitored_groups
+            WHERE user_id = ? AND group_id = ?
+        `, [userId, groupId], (err) => {
+            if (err) {
+                console.error(`Error removing group from database:`, err);
+            } else {
+                console.log(`🗑️  User ${userId} stopped monitoring group: "${groupName}" (removed from database)`);
+            }
+        });
 
         res.json({
             success: true,
@@ -1799,45 +1834,67 @@ async function initializeGroups() {
     }
 }
 
-// Per-user group initialization
+// Per-user group initialization - Load groups from database
 async function initializeGroupsForUser(userId, userClient) {
     console.log(`🔄 Initializing groups for user ${userId}...`);
 
     try {
+        // Load user's monitored groups from database
+        const savedGroups = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT group_id, group_name
+                FROM monitored_groups
+                WHERE user_id = ?
+                ORDER BY added_at DESC
+            `, [userId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        console.log(`📋 Found ${savedGroups.length} saved group(s) for user ${userId} in database`);
+
+        if (savedGroups.length === 0) {
+            console.log(`⚠️  No groups configured for user ${userId}. User can add groups via UI.`);
+            return;
+        }
+
+        // Get all chats from WhatsApp
         const chats = await userClient.getChats();
 
-        // Get user's configured groups from database or use default
-        // For now, using GROUP_NAMES from config (can be moved to per-user config later)
-        for (const groupName of GROUP_NAMES) {
-            const group = chats.find(chat =>
-                chat.isGroup && chat.name && chat.name.toLowerCase().includes(groupName.toLowerCase())
-            );
+        // Initialize each saved group
+        for (const savedGroup of savedGroups) {
+            const groupId = savedGroup.group_id;
+            const groupName = savedGroup.group_name;
+
+            // Find the group chat in WhatsApp
+            const group = chats.find(chat => chat.id._serialized === groupId);
 
             if (group) {
-                console.log(`✅ Found group for user ${userId}: "${group.name}"`);
+                console.log(`✅ Restored group for user ${userId}: "${group.name}"`);
 
                 const memberCount = group.participants ? group.participants.length : 0;
                 const members = group.participants ? group.participants.map(p => p.id._serialized) : [];
 
                 // Store in per-user monitored groups
                 const userGroups = userMonitoredGroups.get(userId);
-                userGroups.set(group.id._serialized, {
+                userGroups.set(groupId, {
                     name: group.name,
-                    id: group.id._serialized,
+                    id: groupId,
                     previousMessageIds: new Set(),
                     previousMembers: new Set(members),
                     isFirstRun: true
                 });
 
                 // Cache group members for this user
-                await cacheGroupMembersForUser(userId, group.id._serialized, userClient);
+                await cacheGroupMembersForUser(userId, groupId, userClient);
             } else {
-                console.log(`❌ Group "${groupName}" not found for user ${userId}`);
+                console.log(`⚠️  Group "${groupName}" (${groupId}) not found in WhatsApp chats for user ${userId}. May have been removed.`);
             }
         }
 
         const userGroups = userMonitoredGroups.get(userId);
-        console.log(`✅ User ${userId} monitoring ${userGroups.size} group(s)`);
+        console.log(`✅ User ${userId} now monitoring ${userGroups.size} group(s)`);
     } catch (error) {
         console.error(`Error initializing groups for user ${userId}:`, error);
     }
