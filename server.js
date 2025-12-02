@@ -2204,6 +2204,9 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         const timestamp = new Date(msg.timestamp * 1000);
         const cachedMembers = groupMembersCache.get(groupId);
 
+        // Debug log ALL message types to understand what we're receiving
+        console.log(`🔍 User ${userId} - Message type: ${msg.type}, hasMedia: ${msg.hasMedia}, body: "${msg.body?.substring(0, 50) || 'empty'}", subtype: ${msg.subtype}`);
+
         // Handle notification messages (joins, leaves)
         if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification') {
             let notificationMessage = msg.body || 'Group notification';
