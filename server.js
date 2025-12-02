@@ -508,173 +508,10 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
 });
 
 // ============================================
-// WHATSAPP AUTHENTICATION ENDPOINTS
+// PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================
-
-// Get QR code for authentication
-app.get('/api/auth/qr', async (req, res) => {
-    // If client was destroyed after logout, reinitialize it
-    if (!client) {
-        console.log('🔄 Client not found, reinitializing...');
-        try {
-            await initClient();
-            await client.initialize();
-            // Wait a bit for QR to be generated
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        } catch (error) {
-            console.error('Error reinitializing client:', error);
-            return res.status(500).json({
-                success: false,
-                error: 'Failed to initialize WhatsApp client'
-            });
-        }
-    }
-
-    if (isClientReady) {
-        return res.json({
-            success: true,
-            authenticated: true,
-            message: 'Already authenticated'
-        });
-    }
-
-    if (!currentQRCode) {
-        return res.json({
-            success: false,
-            authenticated: false,
-            qr: null,
-            authStatus: authStatus,
-            message: 'QR code not yet generated. Please wait...'
-        });
-    }
-
-    res.json({
-        success: true,
-        authenticated: false,
-        qr: currentQRCode,
-        authStatus: authStatus,
-        message: 'Scan this QR code with WhatsApp'
-    });
-});
-
-// Get authentication status
-app.get('/api/auth/status', (req, res) => {
-    res.json({
-        success: true,
-        authenticated: isClientReady,
-        authStatus: authStatus,
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Logout and clear all data
-app.post('/api/auth/logout', async (req, res) => {
-    try {
-        console.log('🚪 Logging out and clearing all data...');
-
-        // Clear all messages from database
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM messages', (err) => {
-                if (err) {
-                    console.error('Error clearing messages:', err);
-                    reject(err);
-                } else {
-                    console.log('✓ Messages cleared');
-                    resolve();
-                }
-            });
-        });
-
-        // Clear all events from database
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM events', (err) => {
-                if (err) {
-                    console.error('Error clearing events:', err);
-                    reject(err);
-                } else {
-                    console.log('✓ Events cleared');
-                    resolve();
-                }
-            });
-        });
-
-        // Clear monitored groups from memory
-        monitoredGroups.clear();
-        groupInfoStore.clear();
-        console.log('✓ Monitored groups cleared');
-
-        // Update config.json to remove all groups (use CONFIG_PATH for persistence)
-        const currentConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        currentConfig.groups = [];
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
-        console.log('✓ Config file cleared');
-
-        // Logout from WhatsApp
-        if (client && isClientReady) {
-            try {
-                await client.logout();
-                console.log('✓ Logged out from WhatsApp');
-            } catch (logoutError) {
-                console.error('Error logging out from WhatsApp:', logoutError);
-                // Continue anyway, we'll still clear the session
-            }
-            isClientReady = false;
-            authStatus = 'logged_out';
-        }
-
-        // Destroy the client instance
-        if (client) {
-            try {
-                await client.destroy();
-                console.log('✓ WhatsApp client destroyed');
-            } catch (destroyError) {
-                console.error('Error destroying client:', destroyError);
-            }
-            client = null;
-        }
-
-        // Wait a moment for Chromium to fully release file locks
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Delete session folder for faster next login
-        const sessionPath = path.join(DATA_DIR, '.wwebjs_auth');
-        if (fs.existsSync(sessionPath)) {
-            try {
-                // Force remove the SingletonLock file first if it exists
-                const lockFile = path.join(sessionPath, 'session', 'SingletonLock');
-                if (fs.existsSync(lockFile)) {
-                    try {
-                        fs.unlinkSync(lockFile);
-                        console.log('✓ Removed Chromium lock file');
-                    } catch (e) {
-                        console.log('⚠️  Could not remove lock file, continuing...');
-                    }
-                }
-
-                fs.rmSync(sessionPath, { recursive: true, force: true });
-                console.log('✓ Session files deleted');
-            } catch (sessionError) {
-                console.error('Error deleting session files:', sessionError);
-                // Continue anyway
-            }
-        }
-
-        res.json({
-            success: true,
-            message: 'Logged out successfully and all data cleared'
-        });
-    } catch (error) {
-        console.error('Error during logout:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Failed to logout'
-        });
-    }
-});
-
-// ============================================
-// PER-USER WHATSAPP ENDPOINTS
-// ============================================
+// Note: Old single-client endpoints removed.
+// Use /api/whatsapp/* endpoints instead.
 
 // Initialize WhatsApp client for logged-in user
 app.post('/api/whatsapp/init', authenticateToken, async (req, res) => {
@@ -2433,8 +2270,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  GET  /api/search?q=query - Search messages`);
     console.log(`  GET  /api/stats - Get statistics\n`);
 
-    // Initialize WhatsApp client
-    initClient();
+    // Multi-tenant mode: WhatsApp clients initialize per-user when they login
+    console.log('✅ Server ready. WhatsApp clients will initialize per user.\n');
 });
 
 // Graceful shutdown
