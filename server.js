@@ -104,7 +104,7 @@ try {
     console.log('📋 No config found in volume, creating default...');
     config = {
         groups: [],  // Start with empty array - user will add groups via UI
-        checkInterval: 60000,
+        checkInterval: 15000,
         messageLimit: 15,
         detectJoinsLeaves: true,
         port: 3000
@@ -115,7 +115,7 @@ try {
 
 // Extract configuration values AFTER loading from volume
 const PORT = process.env.PORT || config.port || 3000;
-const CHECK_INTERVAL = config.checkInterval || 60000;
+const CHECK_INTERVAL = config.checkInterval || 15000;
 const MESSAGE_LIMIT = config.messageLimit || 15;
 const DETECT_JOINS_LEAVES = config.detectJoinsLeaves !== false;
 const GROUP_NAMES = config.groups || [];
@@ -2150,36 +2150,38 @@ async function checkMessagesInGroup(userId, userClient, groupId, groupInfo) {
         if (newMessages.length > 0 || groupInfo.isFirstRun) {
             const processedMessages = [];
 
-            for (const msg of messages) {
+            // Only process NEW messages (not all fetched messages) for better performance
+            const messagesToProcess = groupInfo.isFirstRun ? messages : newMessages;
+
+            for (const msg of messagesToProcess) {
                 const processed = await processMessageForUser(userId, userClient, msg, groupInfo.name, groupId);
                 if (processed) {
                     processedMessages.push(processed);
                 }
             }
 
-            // Save messages to database with user_id
-            const insertStmt = db.prepare(`
-                INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `);
+            // Save messages to database with user_id (only if there are processed messages)
+            if (processedMessages.length > 0) {
+                const insertStmt = db.prepare(`
+                    INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `);
 
-            for (const msg of processedMessages) {
-                insertStmt.run(msg.id, userId, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
+                for (const msg of processedMessages) {
+                    insertStmt.run(msg.id, userId, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
+                }
+
+                insertStmt.finalize();
             }
 
-            insertStmt.finalize();
-
-            if (!groupInfo.isFirstRun) {
+            if (!groupInfo.isFirstRun && newMessages.length > 0) {
                 console.log(`🆕 User ${userId} - ${newMessages.length} new message(s) in ${groupInfo.name}`);
 
-                // Broadcast new messages
-                for (const msg of newMessages) {
-                    const processed = await processMessageForUser(userId, userClient, msg, groupInfo.name, groupId);
-                    if (processed) {
-                        broadcast({ type: 'message', message: processed });
-                    }
+                // Broadcast already-processed new messages (no need to reprocess)
+                for (const processed of processedMessages) {
+                    broadcast({ type: 'message', message: processed });
                 }
-            } else {
+            } else if (groupInfo.isFirstRun) {
                 console.log(`✅ User ${userId} - Loaded ${processedMessages.length} messages from ${groupInfo.name}`);
             }
 
@@ -2204,8 +2206,8 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         const timestamp = new Date(msg.timestamp * 1000);
         const cachedMembers = groupMembersCache.get(groupId);
 
-        // Debug log ALL message types to understand what we're receiving
-        console.log(`🔍 User ${userId} - Message type: ${msg.type}, hasMedia: ${msg.hasMedia}, body: "${msg.body?.substring(0, 50) || 'empty'}", subtype: ${msg.subtype}`);
+        // Debug log for non-standard message types (disabled for performance)
+        // console.log(`🔍 User ${userId} - Message type: ${msg.type}, hasMedia: ${msg.hasMedia}, body: "${msg.body?.substring(0, 50) || 'empty'}", subtype: ${msg.subtype}`);
 
         // Handle notification messages (joins, leaves) - including gp2 type
         if (msg.type === 'notification' || msg.type === 'notification_template' || msg.type === 'group_notification' || msg.type === 'gp2') {
@@ -2214,12 +2216,8 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             let memberId = null;
             let memberName = 'Unknown';
 
-            console.log(`📋 User ${userId} - Notification details:`, {
-                type: msg.type,
-                subtype: msg.subtype,
-                body: msg.body,
-                recipientIds: msg.recipientIds
-            });
+            // Reduced logging for performance
+            // console.log(`📋 User ${userId} - Notification details:`, { type: msg.type, subtype: msg.subtype });
 
             // Try to detect if it's a join or leave event
             if (msg.recipientIds && msg.recipientIds.length > 0) {
