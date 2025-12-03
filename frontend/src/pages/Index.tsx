@@ -386,7 +386,7 @@ const Index = () => {
     joined: filteredEvents.filter((e) => e.type === 'JOIN').length,
     left: filteredEvents.filter((e) => e.type === 'LEAVE').length,
     messageCount: selectedGroupStats?.messageCount || selectedGroupMessages.length,
-    activeUsers: selectedGroupStats?.topSenders?.length || 0,
+    activeUsers: statsData?.stats?.activeUsers || 0,
     certificates: filteredEvents.filter((e) => e.type === 'CERTIFICATE').length,
   };
 

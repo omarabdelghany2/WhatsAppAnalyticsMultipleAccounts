@@ -1128,25 +1128,53 @@ app.post('/api/translate-message', async (req, res) => {
 // Get statistics
 app.get('/api/stats', authenticateToken, (req, res) => {
     const userId = req.user.userId;
+    const dateParam = req.query.date; // Format: "YYYY-MM-DD" or "YYYY-MM-DD,YYYY-MM-DD"
+
     const stats = {
         groups: [],
         totalMessages: 0,
-        totalEvents: 0
+        totalEvents: 0,
+        activeUsers: 0
     };
 
-    // Get total counts for this user
-    db.get('SELECT COUNT(*) as total FROM messages WHERE user_id = ?', [userId], (err, msgCountRow) => {
+    // Build date filter for queries
+    let dateFilter = '';
+    let dateParams = [userId];
+
+    if (dateParam) {
+        if (dateParam.includes(',')) {
+            // Date range
+            const [startDate, endDate] = dateParam.split(',');
+            dateFilter = ' AND DATE(timestamp) BETWEEN ? AND ?';
+            dateParams.push(startDate, endDate);
+        } else {
+            // Single date
+            dateFilter = ' AND DATE(timestamp) = ?';
+            dateParams.push(dateParam);
+        }
+    }
+
+    // Get total message count for this user (with optional date filter)
+    db.get(`SELECT COUNT(*) as total FROM messages WHERE user_id = ?${dateFilter}`, dateParams, (err, msgCountRow) => {
         if (err) {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        db.get('SELECT COUNT(*) as total FROM events WHERE user_id = ?', [userId], (err, eventCountRow) => {
+        // Get total event count for this user (with optional date filter)
+        db.get(`SELECT COUNT(*) as total FROM events WHERE user_id = ?${dateFilter}`, dateParams, (err, eventCountRow) => {
             if (err) {
                 return res.status(500).json({ success: false, error: err.message });
             }
 
-            stats.totalMessages = msgCountRow.total;
-            stats.totalEvents = eventCountRow.total;
+            // Get active users count (distinct senders who sent messages in date range)
+            db.get(`SELECT COUNT(DISTINCT sender_id) as total FROM messages WHERE user_id = ?${dateFilter}`, dateParams, (err, activeUsersRow) => {
+                if (err) {
+                    return res.status(500).json({ success: false, error: err.message });
+                }
+
+                stats.totalMessages = msgCountRow.total;
+                stats.totalEvents = eventCountRow.total;
+                stats.activeUsers = activeUsersRow.total;
 
             // Get user's groups
             const userGroups = userMonitoredGroups.get(userId);
@@ -1164,8 +1192,19 @@ app.get('/api/stats', authenticateToken, (req, res) => {
             groupIds.forEach(groupId => {
                 const groupInfo = userGroups.get(groupId);
 
-                // Get message count for this group and user
-                db.get('SELECT COUNT(*) as count FROM messages WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, msgCount) => {
+                // Build params for group queries
+                const groupParams = [groupId, userId];
+                if (dateParam) {
+                    if (dateParam.includes(',')) {
+                        const [startDate, endDate] = dateParam.split(',');
+                        groupParams.push(startDate, endDate);
+                    } else {
+                        groupParams.push(dateParam);
+                    }
+                }
+
+                // Get message count for this group and user (with date filter)
+                db.get(`SELECT COUNT(*) as count FROM messages WHERE group_id = ? AND user_id = ?${dateFilter}`, groupParams, (err, msgCount) => {
                     if (err) {
                         processed++;
                         if (processed === groupIds.length) {
@@ -1174,8 +1213,8 @@ app.get('/api/stats', authenticateToken, (req, res) => {
                         return;
                     }
 
-                    // Get event count for this group and user
-                    db.get('SELECT COUNT(*) as count FROM events WHERE group_id = ? AND user_id = ?', [groupId, userId], (err, eventCount) => {
+                    // Get event count for this group and user (with date filter)
+                    db.get(`SELECT COUNT(*) as count FROM events WHERE group_id = ? AND user_id = ?${dateFilter}`, groupParams, (err, eventCount) => {
                         if (err) {
                             processed++;
                             if (processed === groupIds.length) {
@@ -1184,15 +1223,15 @@ app.get('/api/stats', authenticateToken, (req, res) => {
                             return;
                         }
 
-                        // Get top senders for this group and user
+                        // Get top senders for this group and user (with date filter)
                         db.all(`
                             SELECT sender as name, COUNT(*) as count
                             FROM messages
-                            WHERE group_id = ? AND user_id = ?
+                            WHERE group_id = ? AND user_id = ?${dateFilter}
                             GROUP BY sender
                             ORDER BY count DESC
                             LIMIT 5
-                        `, [groupId, userId], (err, topSenders) => {
+                        `, groupParams, (err, topSenders) => {
                             if (err) topSenders = [];
 
                             stats.groups.push({

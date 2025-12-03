@@ -101,8 +101,9 @@ export const api = {
     return response.json();
   },
 
-  async getStats() {
-    const response = await fetch(`${API_BASE_URL}/api/stats`, {
+  async getStats(date?: string) {
+    const url = date ? `${API_BASE_URL}/api/stats?date=${encodeURIComponent(date)}` : `${API_BASE_URL}/api/stats`;
+    const response = await fetch(url, {
       headers: getAuthHeaders(),
     });
     return response.json();
