@@ -19,11 +19,7 @@ const Index = () => {
   const [translateMode, setTranslateMode] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string | null>(() => {
-    // Default to today's date in YYYY-MM-DD format for "Specific Day" mode
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  });
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [logoutType, setLogoutType] = useState<'account' | 'whatsapp'>('account');
   const [viewingUserId, setViewingUserId] = useState<number | null>(null);
@@ -453,12 +449,17 @@ const Index = () => {
   // Filter events by selected group
   const filteredEvents = events.filter((e) => !selectedGroupId || e.groupId === selectedGroupId);
 
+  // Calculate active users for selected group (distinct senders)
+  const activeUsersInGroup = selectedGroupId
+    ? new Set(selectedGroupMessages.map(msg => msg.sender)).size
+    : statsData?.stats?.activeUsers || 0;
+
   const analytics = {
     totalMembers: selectedGroupStats?.memberCount || 0,
     joined: filteredEvents.filter((e) => e.type === 'JOIN').length,
     left: filteredEvents.filter((e) => e.type === 'LEAVE').length,
     messageCount: selectedGroupStats?.messageCount || selectedGroupMessages.length,
-    activeUsers: statsData?.stats?.activeUsers || 0,
+    activeUsers: activeUsersInGroup,
     certificates: filteredEvents.filter((e) => e.type === 'CERTIFICATE').length,
   };
 
