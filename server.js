@@ -603,45 +603,6 @@ app.get('/api/admin/users', authenticateToken, authenticateAdmin, (req, res) => 
     });
 });
 
-// TEMPORARY: Setup endpoint to make current user admin (remove after first use)
-app.post('/api/admin/make-me-admin', authenticateToken, (req, res) => {
-    const userId = req.user.userId;
-
-    // Check if any admin already exists
-    db.get('SELECT COUNT(*) as count FROM users WHERE is_admin = 1', (err, row) => {
-        if (err) {
-            return res.status(500).json({ success: false, error: 'Database error' });
-        }
-
-        // Only allow if no admin exists yet, OR user is already admin
-        db.get('SELECT is_admin FROM users WHERE id = ?', [userId], (err, user) => {
-            if (err) {
-                return res.status(500).json({ success: false, error: 'Database error' });
-            }
-
-            if (row.count === 0 || user.is_admin) {
-                // Make this user admin
-                db.run('UPDATE users SET is_admin = 1 WHERE id = ?', [userId], (err) => {
-                    if (err) {
-                        return res.status(500).json({ success: false, error: 'Database error' });
-                    }
-
-                    res.json({
-                        success: true,
-                        message: 'You are now an admin! Please logout and login again.',
-                        userId: userId
-                    });
-                });
-            } else {
-                res.status(403).json({
-                    success: false,
-                    error: 'Admin already exists. Contact existing admin for privileges.'
-                });
-            }
-        });
-    });
-});
-
 // ============================================
 // PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================
