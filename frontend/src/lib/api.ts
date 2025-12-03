@@ -148,6 +148,31 @@ export const api = {
     });
     return response.json();
   },
+
+  // Admin endpoints
+  async getUsers() {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async updateUserAdmin(userId: number, isAdmin: boolean) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/admin`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ isAdmin }),
+    });
+    return response.json();
+  },
+
+  async makeMeAdmin() {
+    const response = await fetch(`${API_BASE_URL}/api/admin/make-me-admin`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
 };
 
 export class WSClient {

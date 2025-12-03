@@ -6,10 +6,11 @@ import { ChatView } from "@/components/ChatView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Languages, LogOut, Power } from "lucide-react";
+import { Languages, LogOut, Power, ShieldCheck } from "lucide-react";
 import { api, wsClient, Message, Event } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Index = () => {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -26,6 +27,7 @@ const Index = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   // Fetch groups
   const { data: groupsData, isLoading: groupsLoading } = useQuery({
@@ -408,6 +410,17 @@ const Index = () => {
           {translateMode ? "WhatsApp 分析" : "WhatsApp Analytics"}
         </h1>
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => navigate('/dashboard')}
+              className="gap-2"
+            >
+              <ShieldCheck className="h-4 w-4" />
+              {translateMode ? "管理面板" : "Admin Dashboard"}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

@@ -615,6 +615,41 @@ app.post('/api/admin/make-me-admin', authenticateToken, (req, res) => {
     });
 });
 
+// Update user admin status (admin only)
+app.put('/api/admin/users/:userId/admin', authenticateToken, authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+    const { isAdmin } = req.body;
+
+    if (typeof isAdmin !== 'boolean') {
+        return res.status(400).json({
+            success: false,
+            error: 'isAdmin must be a boolean'
+        });
+    }
+
+    db.run('UPDATE users SET is_admin = ? WHERE id = ?', [isAdmin ? 1 : 0, userId], function(err) {
+        if (err) {
+            console.error('Error updating user admin status:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: `User ${isAdmin ? 'granted' : 'revoked'} admin privileges`
+        });
+    });
+});
+
 // ============================================
 // PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================
