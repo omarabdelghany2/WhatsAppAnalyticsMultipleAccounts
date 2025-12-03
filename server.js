@@ -756,52 +756,61 @@ app.get('/api/admin/view-user/:userId/events', authenticateToken, authenticateAd
     const date = req.query.date;
     const memberId = req.query.memberId;
 
-    let countQuery = 'SELECT COUNT(*) as count FROM events WHERE user_id = ?';
-    let dataQuery = 'SELECT * FROM events WHERE user_id = ?';
-    const countParams = [viewUserId];
-    const dataParams = [viewUserId];
+    // Build WHERE clause dynamically
+    let whereConditions = ['user_id = ?'];
+    let params = [viewUserId];
 
     if (date) {
+        // Check if date is a range (contains comma)
         if (date.includes(',')) {
             const [startDate, endDate] = date.split(',');
-            countQuery += ' AND date BETWEEN ? AND ?';
-            dataQuery += ' AND date BETWEEN ? AND ?';
-            countParams.push(startDate, endDate);
-            dataParams.push(startDate, endDate);
+            whereConditions.push('date BETWEEN ? AND ?');
+            params.push(startDate, endDate);
         } else {
-            countQuery += ' AND date = ?';
-            dataQuery += ' AND date = ?';
-            countParams.push(date);
-            dataParams.push(date);
+            // Single date
+            whereConditions.push('date = ?');
+            params.push(date);
         }
     }
 
     if (memberId) {
-        countQuery += ' AND member_id = ?';
-        dataQuery += ' AND member_id = ?';
-        countParams.push(memberId);
-        dataParams.push(memberId);
+        whereConditions.push('member_id = ?');
+        params.push(memberId);
     }
 
-    dataQuery += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-    dataParams.push(limit, offset);
+    const whereClause = 'WHERE ' + whereConditions.join(' AND ');
 
-    db.get(countQuery, countParams, (err, countResult) => {
+    // Get total count with filters
+    db.get(`SELECT COUNT(*) as total FROM events ${whereClause}`, params, (err, countRow) => {
         if (err) {
-            return res.status(500).json({ success: false, error: 'Database error' });
+            console.error('Admin events count error:', err);
+            return res.status(500).json({ success: false, error: err.message });
         }
 
-        db.all(dataQuery, dataParams, (err, rows) => {
+        // Get paginated events with filters (use column aliases to match frontend expectations)
+        db.all(`
+            SELECT id, group_id as groupId, group_name as groupName, member_id as memberId,
+                   member_name as memberName, type, timestamp, date
+            FROM events
+            ${whereClause}
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+        `, [...params, limit, offset], (err, rows) => {
             if (err) {
-                return res.status(500).json({ success: false, error: 'Database error' });
+                console.error('Admin events query error:', err);
+                return res.status(500).json({ success: false, error: err.message });
             }
+
+            console.log(`Admin view events for user ${viewUserId}: found ${rows.length} events (total: ${countRow.total})`);
 
             res.json({
                 success: true,
                 events: rows,
-                total: countResult.count,
+                total: countRow.total,
                 limit: limit,
-                offset: offset
+                offset: offset,
+                hasMore: offset + limit < countRow.total,
+                filters: { date, memberId }
             });
         });
     });
@@ -2408,6 +2417,42 @@ async function initClientForUser(userId) {
             userId: userId,
             message: 'Authentication failed: ' + msg
         });
+    });
+
+    // Handle real-time group join events
+    userClient.on('group_join', async (notification) => {
+        const groupId = notification.chatId._serialized;
+        const userGroups = userMonitoredGroups.get(userId);
+        const groupInfo = userGroups ? userGroups.get(groupId) : null;
+
+        if (groupInfo) {
+            for (const participant of notification.recipientIds) {
+                // Correct parameter order: (userId, userClient, memberId, eventType, groupName, groupId)
+                const event = await createEventForUser(userId, userClient, participant._serialized, 'JOIN', groupInfo.name, groupId);
+                if (event) {
+                    console.log(`🟢 User ${userId}: ${event.memberName} joined ${groupInfo.name}`);
+                    broadcast({ type: 'event', userId: userId, event: event });
+                }
+            }
+        }
+    });
+
+    // Handle real-time group leave events
+    userClient.on('group_leave', async (notification) => {
+        const groupId = notification.chatId._serialized;
+        const userGroups = userMonitoredGroups.get(userId);
+        const groupInfo = userGroups ? userGroups.get(groupId) : null;
+
+        if (groupInfo) {
+            for (const participant of notification.recipientIds) {
+                // Correct parameter order: (userId, userClient, memberId, eventType, groupName, groupId)
+                const event = await createEventForUser(userId, userClient, participant._serialized, 'LEAVE', groupInfo.name, groupId);
+                if (event) {
+                    console.log(`🔴 User ${userId}: ${event.memberName} left ${groupInfo.name}`);
+                    broadcast({ type: 'event', userId: userId, event: event });
+                }
+            }
+        }
     });
 
     userClient.on('disconnected', (reason) => {
