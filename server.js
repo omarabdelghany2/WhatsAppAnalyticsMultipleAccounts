@@ -1342,6 +1342,7 @@ app.get('/api/stats', authenticateToken, (req, res) => {
                     });
                 });
             });
+            });
         });
     });
 });
