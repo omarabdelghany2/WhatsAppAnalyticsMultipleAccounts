@@ -603,6 +603,18 @@ app.get('/api/admin/users', authenticateToken, authenticateAdmin, (req, res) => 
     });
 });
 
+// TEMPORARY: Make current user admin (call once, then remove)
+app.post('/api/admin/make-me-admin', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+
+    db.run('UPDATE users SET is_admin = 1 WHERE id = ?', [userId], (err) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: 'Database error' });
+        }
+        res.json({ success: true, message: 'You are now admin. Logout and login again.' });
+    });
+});
+
 // ============================================
 // PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================
