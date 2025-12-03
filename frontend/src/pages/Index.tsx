@@ -31,7 +31,7 @@ const Index = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { isAdmin, user: currentUser } = useAuth();
+  const { isAdmin, user: currentUser, isLoading: authLoading } = useAuth();
 
   // Calculate these before any hooks
   const isViewingAsAdmin = isAdmin && viewingUserId !== null;
@@ -112,7 +112,11 @@ const Index = () => {
 
   // Check WhatsApp connection status periodically (skip if admin - even if not viewing a user yet)
   useEffect(() => {
-    if (isAdmin) return; // Skip check for all admins (whether viewing a user or on user selector)
+    // Wait until auth is loaded before checking
+    if (authLoading) return;
+
+    // Skip check for all admins (whether viewing a user or on user selector)
+    if (isAdmin) return;
 
     const checkWhatsAppStatus = async () => {
       try {
@@ -147,7 +151,7 @@ const Index = () => {
     const interval = setInterval(checkWhatsAppStatus, 15000);
 
     return () => clearInterval(interval);
-  }, [navigate, toast, isAdmin]);
+  }, [navigate, toast, isAdmin, authLoading]);
 
   // Set initial selected group
   useEffect(() => {
@@ -387,9 +391,13 @@ const Index = () => {
 
   // Transform backend data to frontend format
   const transformedGroups = groupsData?.groups?.map((group) => {
+    // Ensure group has required fields and sanitize data
+    const groupId = String(group.id || group.name || '');
+    const groupName = String(group.name || '');
+
     // Use allMessagesData for group list previews
     const allMessages = allMessagesData?.messages || [];
-    const groupMessages = allMessages.filter((msg) => msg.groupId === group.id);
+    const groupMessages = allMessages.filter((msg) => msg.groupId === groupId);
     const lastMessage = groupMessages.length > 0 ? groupMessages[0] : null;
 
     const unreadCount = groupMessages.filter((msg) => {
@@ -400,15 +408,15 @@ const Index = () => {
     }).length;
 
     return {
-      id: group.id,
-      name: group.name,
-      lastMessage: lastMessage?.message || "No messages yet",
+      id: groupId,
+      name: groupName,
+      lastMessage: lastMessage?.message ? String(lastMessage.message) : "No messages yet",
       timestamp: lastMessage ? new Date(lastMessage.timestamp).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit'
       }) : "",
       unread: unreadCount,
-      members: group.memberCount,
+      members: group.memberCount || 0,
     };
   }) || [];
 
@@ -422,9 +430,9 @@ const Index = () => {
 
   // Transform messages to frontend format
   const transformedMessages = sortedMessages.map((msg) => ({
-    id: msg.id,
-    sender: msg.sender,
-    content: msg.message,
+    id: String(msg.id || ''),
+    sender: String(msg.sender || 'Unknown'),
+    content: String(msg.message || ''),
     timestamp: new Date(msg.timestamp).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit'
@@ -457,6 +465,18 @@ const Index = () => {
   // Show user selector if admin and no user selected (must be after all hooks)
   if (shouldShowUserSelector) {
     return <AdminUserSelector onUserSelect={handleUserSelect} />;
+  }
+
+  // Show loading while auth is being checked
+  if (authLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-xl font-semibold mb-2">Loading...</div>
+          <div className="text-sm text-muted-foreground">Authenticating...</div>
+        </div>
+      </div>
+    );
   }
 
   if (groupsLoading || messagesLoading) {
