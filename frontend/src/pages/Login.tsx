@@ -31,10 +31,15 @@ export default function Login() {
       });
       const data = await response.json();
 
+      console.log('User login data:', data);
+      console.log('Is admin?', data.user?.isAdmin);
+
       if (data.success && data.user.isAdmin) {
+        console.log('Redirecting admin to main page');
         // Admins go directly to main page (user selection)
         navigate('/');
       } else {
+        console.log('Redirecting regular user to WhatsApp connect');
         // Regular users need to connect WhatsApp
         navigate('/whatsapp-connect');
       }

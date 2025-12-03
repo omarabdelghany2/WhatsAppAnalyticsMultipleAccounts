@@ -114,6 +114,27 @@ const AdminUserView = () => {
     };
   }) || [];
 
+  // Calculate analytics for the selected group
+  const selectedGroupStats = statsData?.stats?.groups?.find(
+    (g: any) => g.id === selectedGroupId
+  );
+
+  const selectedGroupMessages = messages.filter((m) => !selectedGroupId || m.groupId === selectedGroupId);
+  const filteredEvents = events.filter((e) => !selectedGroupId || e.groupId === selectedGroupId);
+
+  const analytics = {
+    totalMembers: selectedGroupStats?.memberCount || 0,
+    joined: filteredEvents.filter((e) => e.type === 'JOIN').length,
+    left: filteredEvents.filter((e) => e.type === 'LEAVE').length,
+    messageCount: selectedGroupStats?.messageCount || selectedGroupMessages.length,
+    activeUsers: statsData?.stats?.activeUsers || 0,
+    certificates: filteredEvents.filter((e) => e.type === 'CERTIFICATE').length,
+  };
+
+  const selectedGroupName = selectedGroupId
+    ? transformedGroups.find((g) => g.id === selectedGroupId)?.name || ""
+    : "All Groups";
+
   if (groupsLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
@@ -181,20 +202,18 @@ const AdminUserView = () => {
         </div>
         <div className="col-span-6 h-full">
           <ChatView
-            messages={messages}
-            loading={messagesLoading}
-            selectedGroup={transformedGroups.find((g: any) => g.id === selectedGroupId)}
-            translateMode={false}
+            messages={selectedGroupMessages}
+            groupName={selectedGroupName}
           />
         </div>
         <div className="col-span-3 h-full">
           <AnalyticsPanel
-            selectedGroupId={selectedGroupId}
-            events={events}
-            stats={statsData?.stats}
+            analytics={analytics}
             translateMode={false}
-            selectedDate={selectedDate}
-            onDateChange={setSelectedDate}
+            onDateFilterChange={setSelectedDate}
+            events={filteredEvents}
+            groupName={selectedGroupName}
+            groupId={selectedGroupId}
           />
         </div>
       </div>
