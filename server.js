@@ -235,6 +235,28 @@ function initializeDatabase() {
             }
         });
 
+        // Add is_admin column to users table for admin privileges
+        db.run(`
+            ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding is_admin column:', err);
+            } else if (!err) {
+                console.log('✅ Added is_admin column to users table');
+            }
+        });
+
+        // Add whatsapp_authenticated column to users table for quick lookup
+        db.run(`
+            ALTER TABLE users ADD COLUMN whatsapp_authenticated BOOLEAN DEFAULT 0
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding whatsapp_authenticated column:', err);
+            } else if (!err) {
+                console.log('✅ Added whatsapp_authenticated column to users table');
+            }
+        });
+
         // Add user_id column to existing messages table if it doesn't exist
         db.run(`
             ALTER TABLE messages ADD COLUMN user_id INTEGER
@@ -712,6 +734,13 @@ app.post('/api/whatsapp/logout', authenticateToken, async (req, res) => {
             UPDATE whatsapp_sessions
             SET is_authenticated = 0, phone_number = NULL
             WHERE user_id = ?
+        `, [userId]);
+
+        // Also update users table
+        db.run(`
+            UPDATE users
+            SET whatsapp_authenticated = 0
+            WHERE id = ?
         `, [userId]);
 
         res.json({
@@ -1830,6 +1859,13 @@ async function initClientForUser(userId) {
                 SET phone_number = ?, is_authenticated = 1, last_connected = datetime('now')
                 WHERE user_id = ?
             `, [phoneNumber, userId]);
+
+            // Also update users table for quick admin lookups
+            db.run(`
+                UPDATE users
+                SET whatsapp_authenticated = 1
+                WHERE id = ?
+            `, [userId]);
         } catch (error) {
             console.error(`Error getting phone number for user ${userId}:`, error);
         }
