@@ -22,7 +22,22 @@ export default function Login() {
 
     try {
       await login(email, password);
-      navigate('/whatsapp-connect'); // Redirect to WhatsApp QR page
+
+      // Check if user is admin
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+
+      if (data.success && data.user.isAdmin) {
+        // Admins go directly to main page (user selection)
+        navigate('/');
+      } else {
+        // Regular users need to connect WhatsApp
+        navigate('/whatsapp-connect');
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to login');
     } finally {
