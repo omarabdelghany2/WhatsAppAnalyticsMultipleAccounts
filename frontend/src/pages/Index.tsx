@@ -6,11 +6,13 @@ import { ChatView } from "@/components/ChatView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Languages, LogOut, Power, ShieldCheck } from "lucide-react";
+import { Languages, LogOut, Power, ShieldCheck, Eye, Users } from "lucide-react";
 import { api, wsClient, Message, Event } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import AdminUserSelector from "@/components/AdminUserSelector";
+import { Badge } from "@/components/ui/badge";
 
 const Index = () => {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -24,31 +26,70 @@ const Index = () => {
   });
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [logoutType, setLogoutType] = useState<'account' | 'whatsapp'>('account');
+  const [viewingUserId, setViewingUserId] = useState<number | null>(null);
+  const [viewingUserInfo, setViewingUserInfo] = useState<{username: string, email: string} | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user: currentUser } = useAuth();
+
+  // Handle user selection for admin
+  const handleUserSelect = async (userId: number) => {
+    setViewingUserId(userId);
+    // Fetch user info
+    try {
+      const response = await api.getUsers();
+      if (response.success) {
+        const user = response.users.find((u: any) => u.id === userId);
+        if (user) {
+          setViewingUserInfo({ username: user.username, email: user.email });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching user info:', error);
+    }
+  };
+
+  // Handle switch user for admin
+  const handleSwitchUser = () => {
+    setViewingUserId(null);
+    setViewingUserInfo(null);
+    setSelectedGroupId(null);
+    setMessages([]);
+    setEvents([]);
+  };
+
+  // If admin and no user selected, show user selector
+  if (isAdmin && viewingUserId === null) {
+    return <AdminUserSelector onUserSelect={handleUserSelect} />;
+  }
+
+  const isViewingAsAdmin = isAdmin && viewingUserId !== null;
+  const targetUserId = isViewingAsAdmin ? viewingUserId : (currentUser?.id || 0);
 
   // Fetch groups
   const { data: groupsData, isLoading: groupsLoading } = useQuery({
-    queryKey: ['groups'],
-    queryFn: api.getGroups,
+    queryKey: isViewingAsAdmin ? ['admin-view-groups', targetUserId] : ['groups'],
+    queryFn: isViewingAsAdmin ? () => api.viewUserGroups(targetUserId) : api.getGroups,
     refetchInterval: 30000, // Refetch every 30 seconds
+    enabled: targetUserId > 0,
   });
 
   // Fetch recent messages from all groups (for group list preview)
   const { data: allMessagesData, refetch: refetchAllMessages } = useQuery({
-    queryKey: ['all-messages'],
-    queryFn: () => api.getMessages(100, 0),
+    queryKey: isViewingAsAdmin ? ['admin-view-all-messages', targetUserId] : ['all-messages'],
+    queryFn: isViewingAsAdmin ? () => api.viewUserMessages(targetUserId, 100, 0) : () => api.getMessages(100, 0),
     enabled: !!groupsData?.groups?.length,
   });
 
   // Fetch all messages for the selected group (with higher limit to get all messages)
   const { data: selectedGroupMessagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
-    queryKey: ['group-messages', selectedGroupId],
+    queryKey: isViewingAsAdmin ? ['admin-view-group-messages', targetUserId, selectedGroupId] : ['group-messages', selectedGroupId],
     queryFn: () => {
       if (selectedGroupId) {
-        return api.getMessagesByGroup(selectedGroupId, 1000, 0);
+        return isViewingAsAdmin
+          ? api.viewUserMessagesByGroup(targetUserId, selectedGroupId, 1000, 0)
+          : api.getMessagesByGroup(selectedGroupId, 1000, 0);
       }
       return Promise.resolve({ success: true, messages: [], total: 0 });
     },
@@ -57,21 +98,25 @@ const Index = () => {
 
   // Fetch all events (filtered by selected date, or all if selectedDate is null)
   const { data: eventsData } = useQuery({
-    queryKey: ['events', selectedDate],
-    queryFn: () => api.getEvents(10000, 0, selectedDate || undefined), // Increased limit to fetch all events
+    queryKey: isViewingAsAdmin ? ['admin-view-events', targetUserId, selectedDate] : ['events', selectedDate],
+    queryFn: isViewingAsAdmin
+      ? () => api.viewUserEvents(targetUserId, 10000, 0, selectedDate || undefined)
+      : () => api.getEvents(10000, 0, selectedDate || undefined),
     enabled: !!groupsData?.groups?.length,
   });
 
   // Fetch statistics
   const { data: statsData } = useQuery({
-    queryKey: ['stats'],
-    queryFn: api.getStats,
+    queryKey: isViewingAsAdmin ? ['admin-view-stats', targetUserId] : ['stats'],
+    queryFn: isViewingAsAdmin ? () => api.viewUserStats(targetUserId) : api.getStats,
     refetchInterval: 60000, // Refetch every minute
     enabled: !!groupsData?.groups?.length,
   });
 
-  // Check WhatsApp connection status periodically
+  // Check WhatsApp connection status periodically (skip if viewing as admin)
   useEffect(() => {
+    if (isViewingAsAdmin) return; // Skip check when viewing as admin
+
     const checkWhatsAppStatus = async () => {
       try {
         const token = localStorage.getItem('token');
@@ -105,7 +150,7 @@ const Index = () => {
     const interval = setInterval(checkWhatsAppStatus, 15000);
 
     return () => clearInterval(interval);
-  }, [navigate, toast]);
+  }, [navigate, toast, isViewingAsAdmin]);
 
   // Set initial selected group
   useEffect(() => {
@@ -131,8 +176,10 @@ const Index = () => {
     }
   }, [eventsData]);
 
-  // WebSocket connection for real-time updates
+  // WebSocket connection for real-time updates (skip if viewing as admin)
   useEffect(() => {
+    if (isViewingAsAdmin) return; // Skip WebSocket when viewing as admin
+
     wsClient.connect();
 
     const handleMessage = (data: any) => {
@@ -231,6 +278,15 @@ const Index = () => {
   };
 
   const handleAddGroup = async (name: string) => {
+    if (isViewingAsAdmin) {
+      toast({
+        title: "Read-only Mode",
+        description: "You cannot add groups while viewing as admin",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       const result = await api.addGroup(name);
 
@@ -254,6 +310,15 @@ const Index = () => {
   };
 
   const handleDeleteGroup = async (groupId: string) => {
+    if (isViewingAsAdmin) {
+      toast({
+        title: "Read-only Mode",
+        description: "You cannot delete groups while viewing as admin",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       await api.deleteGroup(groupId);
 
@@ -406,10 +471,31 @@ const Index = () => {
   return (
     <div className="h-screen flex flex-col bg-background">
       <header className="border-b border-border bg-card px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">
-          {translateMode ? "WhatsApp 分析" : "WhatsApp Analytics"}
-        </h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-bold text-foreground">
+            {translateMode ? "WhatsApp 分析" : "WhatsApp Analytics"}
+          </h1>
+          {isViewingAsAdmin && viewingUserInfo && (
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="gap-1">
+                <Eye className="h-3 w-3" />
+                Viewing {viewingUserInfo.username}
+              </Badge>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2">
+          {isViewingAsAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSwitchUser}
+              className="gap-2"
+            >
+              <Users className="h-4 w-4" />
+              {translateMode ? "切换用户" : "Switch User"}
+            </Button>
+          )}
           {isAdmin && (
             <Button
               variant="default"
@@ -443,18 +529,20 @@ const Index = () => {
             <LogOut className="h-4 w-4" />
             {translateMode ? "退出账户" : "Logout from Account"}
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              setLogoutType('whatsapp');
-              setShowLogoutDialog(true);
-            }}
-            className="gap-2"
-          >
-            <Power className="h-4 w-4" />
-            {translateMode ? "断开WhatsApp" : "Disconnect WhatsApp"}
-          </Button>
+          {!isViewingAsAdmin && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setLogoutType('whatsapp');
+                setShowLogoutDialog(true);
+              }}
+              className="gap-2"
+            >
+              <Power className="h-4 w-4" />
+              {translateMode ? "断开WhatsApp" : "Disconnect WhatsApp"}
+            </Button>
+          )}
         </div>
       </header>
       <div className="flex-1 grid grid-cols-12 overflow-hidden">
