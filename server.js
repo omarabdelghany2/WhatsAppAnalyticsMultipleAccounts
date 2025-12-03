@@ -2277,15 +2277,25 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
         let senderId = contact.id._serialized;
         let senderName = contact.pushname || contact.name || contact.verifiedName || contact.number || senderId.split('@')[0] || 'Unknown';
 
+        // Extract phone number from contact ID
+        let senderPhone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || senderId.split('@')[0]);
+
         // Try to get normalized ID and name from cache
         if (cachedMembers && cachedMembers.has(senderId)) {
             const cached = cachedMembers.get(senderId);
             senderName = cached.name || senderName;
+            senderPhone = cached.phone || senderPhone;
         }
 
         // Ensure senderName is never null or undefined
         if (!senderName || senderName === 'undefined') {
             senderName = senderId.split('@')[0] || 'Unknown';
+        }
+
+        // Format as "Name (PhoneNumber)" if phone is different from name
+        let senderDisplay = senderName;
+        if (senderPhone && senderName !== senderPhone && senderPhone !== 'Unknown') {
+            senderDisplay = `${senderName} (${senderPhone})`;
         }
 
         // Check if it's a voice/audio message - create CERTIFICATE event
@@ -2328,7 +2338,7 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             id: msg.id._serialized,
             groupId: groupId,
             groupName: groupName,
-            sender: senderName,
+            sender: senderDisplay,
             senderId: senderId,
             message: messageContent,
             timestamp: timestamp.toISOString()
