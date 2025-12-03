@@ -651,6 +651,342 @@ app.put('/api/admin/users/:userId/admin', authenticateToken, authenticateAdmin, 
 });
 
 // ============================================
+// ADMIN VIEW USER DATA ENDPOINTS
+// ============================================
+// These endpoints allow admins to view any user's data
+
+// Get groups for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/groups', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const userGroups = userMonitoredGroups.get(viewUserId);
+
+    if (!userGroups) {
+        return res.json({
+            success: true,
+            groups: [],
+            count: 0
+        });
+    }
+
+    const groups = Array.from(userGroups.entries()).map(([id, name]) => ({
+        id,
+        name
+    }));
+
+    res.json({
+        success: true,
+        groups: groups,
+        count: groups.length
+    });
+});
+
+// Get messages for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/messages', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+
+    db.get('SELECT COUNT(*) as count FROM messages WHERE user_id = ?', [viewUserId], (err, countResult) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: 'Database error' });
+        }
+
+        db.all(
+            'SELECT * FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+            [viewUserId, limit, offset],
+            (err, rows) => {
+                if (err) {
+                    return res.status(500).json({ success: false, error: 'Database error' });
+                }
+
+                res.json({
+                    success: true,
+                    messages: rows,
+                    total: countResult.count,
+                    limit: limit,
+                    offset: offset
+                });
+            }
+        );
+    });
+});
+
+// Get messages from a specific group for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/messages/:groupId', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const groupId = req.params.groupId;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+
+    db.get(
+        'SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND group_id = ?',
+        [viewUserId, groupId],
+        (err, countResult) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: 'Database error' });
+            }
+
+            db.all(
+                'SELECT * FROM messages WHERE user_id = ? AND group_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+                [viewUserId, groupId, limit, offset],
+                (err, rows) => {
+                    if (err) {
+                        return res.status(500).json({ success: false, error: 'Database error' });
+                    }
+
+                    res.json({
+                        success: true,
+                        messages: rows,
+                        total: countResult.count,
+                        limit: limit,
+                        offset: offset
+                    });
+                }
+            );
+        }
+    );
+});
+
+// Get events for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/events', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
+    const date = req.query.date;
+    const memberId = req.query.memberId;
+
+    let countQuery = 'SELECT COUNT(*) as count FROM events WHERE user_id = ?';
+    let dataQuery = 'SELECT * FROM events WHERE user_id = ?';
+    const countParams = [viewUserId];
+    const dataParams = [viewUserId];
+
+    if (date) {
+        if (date.includes(',')) {
+            const [startDate, endDate] = date.split(',');
+            countQuery += ' AND date BETWEEN ? AND ?';
+            dataQuery += ' AND date BETWEEN ? AND ?';
+            countParams.push(startDate, endDate);
+            dataParams.push(startDate, endDate);
+        } else {
+            countQuery += ' AND date = ?';
+            dataQuery += ' AND date = ?';
+            countParams.push(date);
+            dataParams.push(date);
+        }
+    }
+
+    if (memberId) {
+        countQuery += ' AND member_id = ?';
+        dataQuery += ' AND member_id = ?';
+        countParams.push(memberId);
+        dataParams.push(memberId);
+    }
+
+    dataQuery += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+    dataParams.push(limit, offset);
+
+    db.get(countQuery, countParams, (err, countResult) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: 'Database error' });
+        }
+
+        db.all(dataQuery, dataParams, (err, rows) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: 'Database error' });
+            }
+
+            res.json({
+                success: true,
+                events: rows,
+                total: countResult.count,
+                limit: limit,
+                offset: offset
+            });
+        });
+    });
+});
+
+// Get stats for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/stats', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const dateParam = req.query.date;
+
+    const stats = {
+        groups: [],
+        topSenders: [],
+        totalMessages: 0,
+        totalEvents: 0,
+        totalJoins: 0,
+        totalLeaves: 0,
+        totalCertificates: 0,
+        dailyActivity: []
+    };
+
+    const userGroups = userMonitoredGroups.get(viewUserId);
+    if (userGroups) {
+        stats.groups = Array.from(userGroups.entries()).map(([id, name]) => ({
+            id,
+            name
+        }));
+    }
+
+    let dateFilter = '';
+    let dateParams = [];
+    if (dateParam) {
+        if (dateParam.includes(',')) {
+            const [startDate, endDate] = dateParam.split(',');
+            dateFilter = ' AND date(timestamp) BETWEEN ? AND ?';
+            dateParams = [startDate, endDate];
+        } else {
+            dateFilter = ' AND date(timestamp) = ?';
+            dateParams = [dateParam];
+        }
+    }
+
+    db.get(
+        `SELECT COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter}`,
+        [viewUserId, ...dateParams],
+        (err, result) => {
+            if (!err && result) stats.totalMessages = result.count;
+
+            db.all(
+                `SELECT sender, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY sender ORDER BY count DESC LIMIT 10`,
+                [viewUserId, ...dateParams],
+                (err, senders) => {
+                    if (!err) stats.topSenders = senders;
+
+                    db.get(
+                        `SELECT COUNT(*) as count FROM events WHERE user_id = ?${dateFilter.replace('timestamp', 'timestamp')}`,
+                        [viewUserId, ...dateParams],
+                        (err, result) => {
+                            if (!err && result) stats.totalEvents = result.count;
+
+                            db.get(
+                                `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'JOIN'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                [viewUserId, ...dateParams],
+                                (err, result) => {
+                                    if (!err && result) stats.totalJoins = result.count;
+
+                                    db.get(
+                                        `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'LEAVE'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                        [viewUserId, ...dateParams],
+                                        (err, result) => {
+                                            if (!err && result) stats.totalLeaves = result.count;
+
+                                            db.get(
+                                                `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'CERTIFICATE'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                                [viewUserId, ...dateParams],
+                                                (err, result) => {
+                                                    if (!err && result) stats.totalCertificates = result.count;
+
+                                                    db.all(
+                                                        `SELECT date(timestamp) as date, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30`,
+                                                        [viewUserId, ...dateParams],
+                                                        (err, activity) => {
+                                                            if (!err) stats.dailyActivity = activity;
+                                                            res.json({ success: true, stats });
+                                                        }
+                                                    );
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        }
+    );
+});
+
+// Get group members for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/groups/:groupId/members', authenticateToken, authenticateAdmin, async (req, res) => {
+    try {
+        const viewUserId = parseInt(req.params.userId);
+        const groupId = req.params.groupId;
+
+        const userClient = whatsappClients.get(viewUserId);
+        if (!userClient || !userClientReady.get(viewUserId)) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready for this user'
+            });
+        }
+
+        const chat = await userClient.getChatById(groupId);
+        if (!chat.isGroup) {
+            return res.status(400).json({
+                success: false,
+                error: 'Not a group chat'
+            });
+        }
+
+        const participants = chat.participants || [];
+        const membersMap = groupMembersCache.get(groupId) || new Map();
+
+        const members = await Promise.all(
+            participants.map(async (participant) => {
+                const cachedMember = membersMap.get(participant.id._serialized);
+                if (cachedMember) {
+                    return {
+                        id: participant.id._serialized,
+                        phone: cachedMember.phone,
+                        name: cachedMember.name,
+                        isAdmin: participant.isAdmin,
+                        isSuperAdmin: participant.isSuperAdmin
+                    };
+                }
+
+                try {
+                    const contact = await userClient.getContactById(participant.id._serialized);
+                    const phone = participant.id.user;
+                    const name = contact.pushname || contact.name || phone;
+
+                    membersMap.set(participant.id._serialized, {
+                        name: name,
+                        phone: phone,
+                        isAdmin: participant.isAdmin
+                    });
+
+                    return {
+                        id: participant.id._serialized,
+                        phone: phone,
+                        name: name,
+                        isAdmin: participant.isAdmin,
+                        isSuperAdmin: participant.isSuperAdmin
+                    };
+                } catch (error) {
+                    const phone = participant.id.user;
+                    return {
+                        id: participant.id._serialized,
+                        phone: phone,
+                        name: phone,
+                        isAdmin: participant.isAdmin,
+                        isSuperAdmin: participant.isSuperAdmin
+                    };
+                }
+            })
+        );
+
+        groupMembersCache.set(groupId, membersMap);
+
+        res.json({
+            success: true,
+            members: members,
+            count: members.length
+        });
+    } catch (error) {
+        console.error('Error fetching group members:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch group members'
+        });
+    }
+});
+
+// ============================================
 // PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================
 // Note: Old single-client endpoints removed.

@@ -173,6 +173,58 @@ export const api = {
     });
     return response.json();
   },
+
+  // Admin view user data endpoints
+  async viewUserGroups(userId: number) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/view-user/${userId}/groups`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async viewUserMessages(userId: number, limit = 100, offset = 0) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/view-user/${userId}/messages?limit=${limit}&offset=${offset}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async viewUserMessagesByGroup(userId: number, groupId: string, limit = 100, offset = 0) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/view-user/${userId}/messages/${groupId}?limit=${limit}&offset=${offset}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async viewUserEvents(userId: number, limit = 100, offset = 0, date?: string, memberId?: string) {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      offset: offset.toString()
+    });
+    if (date) params.append('date', date);
+    if (memberId) params.append('memberId', memberId);
+    const response = await fetch(`${API_BASE_URL}/api/admin/view-user/${userId}/events?${params}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async viewUserStats(userId: number, date?: string) {
+    const url = date
+      ? `${API_BASE_URL}/api/admin/view-user/${userId}/stats?date=${encodeURIComponent(date)}`
+      : `${API_BASE_URL}/api/admin/view-user/${userId}/stats`;
+    const response = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async viewUserGroupMembers(userId: number, groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/view-user/${userId}/groups/${groupId}/members`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
 };
 
 export class WSClient {

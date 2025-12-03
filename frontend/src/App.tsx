@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import WhatsAppConnect from "./pages/WhatsAppConnect";
 import Dashboard from "./pages/Dashboard";
+import AdminUserView from "./pages/AdminUserView";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AdminRoute from "./components/AdminRoute";
@@ -47,6 +48,16 @@ const App = () => (
                 <ProtectedRoute>
                   <AdminRoute>
                     <Dashboard />
+                  </AdminRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/view/:userId"
+              element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <AdminUserView />
                   </AdminRoute>
                 </ProtectedRoute>
               }
