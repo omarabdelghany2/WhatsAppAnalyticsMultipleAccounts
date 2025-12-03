@@ -110,9 +110,9 @@ const Index = () => {
     enabled: !!groupsData?.groups?.length,
   });
 
-  // Check WhatsApp connection status periodically (skip if viewing as admin)
+  // Check WhatsApp connection status periodically (skip if admin - even if not viewing a user yet)
   useEffect(() => {
-    if (isViewingAsAdmin) return; // Skip check when viewing as admin
+    if (isAdmin) return; // Skip check for all admins (whether viewing a user or on user selector)
 
     const checkWhatsAppStatus = async () => {
       try {
@@ -147,7 +147,7 @@ const Index = () => {
     const interval = setInterval(checkWhatsAppStatus, 15000);
 
     return () => clearInterval(interval);
-  }, [navigate, toast, isViewingAsAdmin]);
+  }, [navigate, toast, isAdmin]);
 
   // Set initial selected group
   useEffect(() => {
@@ -173,9 +173,9 @@ const Index = () => {
     }
   }, [eventsData]);
 
-  // WebSocket connection for real-time updates (skip if viewing as admin)
+  // WebSocket connection for real-time updates (skip for admins)
   useEffect(() => {
-    if (isViewingAsAdmin) return; // Skip WebSocket when viewing as admin
+    if (isAdmin) return; // Skip WebSocket for all admins
 
     wsClient.connect();
 
