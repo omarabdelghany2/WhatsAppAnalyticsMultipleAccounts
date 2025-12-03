@@ -668,9 +668,10 @@ app.get('/api/admin/view-user/:userId/groups', authenticateToken, authenticateAd
         });
     }
 
-    const groups = Array.from(userGroups.entries()).map(([id, name]) => ({
-        id,
-        name
+    const groups = Array.from(userGroups.values()).map(g => ({
+        id: g.id,
+        name: g.name,
+        memberCount: g.previousMembers ? g.previousMembers.size : 0
     }));
 
     res.json({
@@ -819,16 +820,9 @@ app.get('/api/admin/view-user/:userId/stats', authenticateToken, authenticateAdm
         totalJoins: 0,
         totalLeaves: 0,
         totalCertificates: 0,
+        activeUsers: 0,
         dailyActivity: []
     };
-
-    const userGroups = userMonitoredGroups.get(viewUserId);
-    if (userGroups) {
-        stats.groups = Array.from(userGroups.entries()).map(([id, name]) => ({
-            id,
-            name
-        }));
-    }
 
     let dateFilter = '';
     let dateParams = [];
@@ -843,48 +837,128 @@ app.get('/api/admin/view-user/:userId/stats', authenticateToken, authenticateAdm
         }
     }
 
+    // Get active users count
     db.get(
-        `SELECT COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter}`,
+        `SELECT COUNT(DISTINCT sender_id) as count FROM messages WHERE user_id = ?${dateFilter}`,
         [viewUserId, ...dateParams],
-        (err, result) => {
-            if (!err && result) stats.totalMessages = result.count;
+        (err, activeUsersResult) => {
+            if (!err && activeUsersResult) stats.activeUsers = activeUsersResult.count;
 
-            db.all(
-                `SELECT sender, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY sender ORDER BY count DESC LIMIT 10`,
+            db.get(
+                `SELECT COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter}`,
                 [viewUserId, ...dateParams],
-                (err, senders) => {
-                    if (!err) stats.topSenders = senders;
+                (err, result) => {
+                    if (!err && result) stats.totalMessages = result.count;
 
-                    db.get(
-                        `SELECT COUNT(*) as count FROM events WHERE user_id = ?${dateFilter.replace('timestamp', 'timestamp')}`,
+                    db.all(
+                        `SELECT sender, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY sender ORDER BY count DESC LIMIT 10`,
                         [viewUserId, ...dateParams],
-                        (err, result) => {
-                            if (!err && result) stats.totalEvents = result.count;
+                        (err, senders) => {
+                            if (!err) stats.topSenders = senders;
 
                             db.get(
-                                `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'JOIN'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                `SELECT COUNT(*) as count FROM events WHERE user_id = ?${dateFilter.replace('timestamp', 'timestamp')}`,
                                 [viewUserId, ...dateParams],
                                 (err, result) => {
-                                    if (!err && result) stats.totalJoins = result.count;
+                                    if (!err && result) stats.totalEvents = result.count;
 
                                     db.get(
-                                        `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'LEAVE'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                        `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'JOIN'${dateFilter.replace('timestamp', 'timestamp')}`,
                                         [viewUserId, ...dateParams],
                                         (err, result) => {
-                                            if (!err && result) stats.totalLeaves = result.count;
+                                            if (!err && result) stats.totalJoins = result.count;
 
                                             db.get(
-                                                `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'CERTIFICATE'${dateFilter.replace('timestamp', 'timestamp')}`,
+                                                `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'LEAVE'${dateFilter.replace('timestamp', 'timestamp')}`,
                                                 [viewUserId, ...dateParams],
                                                 (err, result) => {
-                                                    if (!err && result) stats.totalCertificates = result.count;
+                                                    if (!err && result) stats.totalLeaves = result.count;
 
-                                                    db.all(
-                                                        `SELECT date(timestamp) as date, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30`,
+                                                    db.get(
+                                                        `SELECT COUNT(*) as count FROM events WHERE user_id = ? AND type = 'CERTIFICATE'${dateFilter.replace('timestamp', 'timestamp')}`,
                                                         [viewUserId, ...dateParams],
-                                                        (err, activity) => {
-                                                            if (!err) stats.dailyActivity = activity;
-                                                            res.json({ success: true, stats });
+                                                        (err, result) => {
+                                                            if (!err && result) stats.totalCertificates = result.count;
+
+                                                            db.all(
+                                                                `SELECT date(timestamp) as date, COUNT(*) as count FROM messages WHERE user_id = ?${dateFilter} GROUP BY date(timestamp) ORDER BY date DESC LIMIT 30`,
+                                                                [viewUserId, ...dateParams],
+                                                                (err, activity) => {
+                                                                    if (!err) stats.dailyActivity = activity;
+
+                                                                    // Get user's groups with detailed stats
+                                                                    const userGroups = userMonitoredGroups.get(viewUserId);
+                                                                    if (!userGroups || userGroups.size === 0) {
+                                                                        return res.json({ success: true, stats });
+                                                                    }
+
+                                                                    const groupIds = Array.from(userGroups.keys());
+                                                                    let processed = 0;
+
+                                                                    groupIds.forEach(groupId => {
+                                                                        const groupInfo = userGroups.get(groupId);
+
+                                                                        // Build params for group queries
+                                                                        const groupParams = [groupId, viewUserId];
+                                                                        if (dateParam) {
+                                                                            if (dateParam.includes(',')) {
+                                                                                const [startDate, endDate] = dateParam.split(',');
+                                                                                groupParams.push(startDate, endDate);
+                                                                            } else {
+                                                                                groupParams.push(dateParam);
+                                                                            }
+                                                                        }
+
+                                                                        // Get message count for this group
+                                                                        db.get(`SELECT COUNT(*) as count FROM messages WHERE group_id = ? AND user_id = ?${dateFilter}`, groupParams, (err, msgCount) => {
+                                                                            if (err) {
+                                                                                processed++;
+                                                                                if (processed === groupIds.length) {
+                                                                                    return res.json({ success: true, stats });
+                                                                                }
+                                                                                return;
+                                                                            }
+
+                                                                            // Get event count for this group
+                                                                            db.get(`SELECT COUNT(*) as count FROM events WHERE group_id = ? AND user_id = ?${dateFilter}`, groupParams, (err, eventCount) => {
+                                                                                if (err) {
+                                                                                    processed++;
+                                                                                    if (processed === groupIds.length) {
+                                                                                        return res.json({ success: true, stats });
+                                                                                    }
+                                                                                    return;
+                                                                                }
+
+                                                                                // Get top senders for this group
+                                                                                db.all(`
+                                                                                    SELECT sender as name, COUNT(*) as count
+                                                                                    FROM messages
+                                                                                    WHERE group_id = ? AND user_id = ?${dateFilter}
+                                                                                    GROUP BY sender
+                                                                                    ORDER BY count DESC
+                                                                                    LIMIT 5
+                                                                                `, groupParams, (err, topSenders) => {
+                                                                                    if (err) topSenders = [];
+
+                                                                                    stats.groups.push({
+                                                                                        id: groupId,
+                                                                                        name: groupInfo.name,
+                                                                                        messageCount: msgCount.count,
+                                                                                        eventCount: eventCount.count,
+                                                                                        memberCount: groupInfo.previousMembers ? groupInfo.previousMembers.size : 0,
+                                                                                        topSenders: topSenders || []
+                                                                                    });
+
+                                                                                    processed++;
+                                                                                    if (processed === groupIds.length) {
+                                                                                        res.json({ success: true, stats });
+                                                                                    }
+                                                                                });
+                                                                            });
+                                                                        });
+                                                                    });
+                                                                }
+                                                            );
                                                         }
                                                     );
                                                 }
