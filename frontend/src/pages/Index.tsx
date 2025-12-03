@@ -33,6 +33,11 @@ const Index = () => {
   const navigate = useNavigate();
   const { isAdmin, user: currentUser } = useAuth();
 
+  // Calculate these before any hooks
+  const isViewingAsAdmin = isAdmin && viewingUserId !== null;
+  const targetUserId = isViewingAsAdmin ? viewingUserId! : (currentUser?.id || 0);
+  const shouldShowUserSelector = isAdmin && viewingUserId === null;
+
   // Handle user selection for admin
   const handleUserSelect = async (userId: number) => {
     setViewingUserId(userId);
@@ -58,14 +63,6 @@ const Index = () => {
     setMessages([]);
     setEvents([]);
   };
-
-  // If admin and no user selected, show user selector
-  if (isAdmin && viewingUserId === null) {
-    return <AdminUserSelector onUserSelect={handleUserSelect} />;
-  }
-
-  const isViewingAsAdmin = isAdmin && viewingUserId !== null;
-  const targetUserId = isViewingAsAdmin ? viewingUserId : (currentUser?.id || 0);
 
   // Fetch groups
   const { data: groupsData, isLoading: groupsLoading } = useQuery({
@@ -456,6 +453,11 @@ const Index = () => {
     activeUsers: statsData?.stats?.activeUsers || 0,
     certificates: filteredEvents.filter((e) => e.type === 'CERTIFICATE').length,
   };
+
+  // Show user selector if admin and no user selected (must be after all hooks)
+  if (shouldShowUserSelector) {
+    return <AdminUserSelector onUserSelect={handleUserSelect} />;
+  }
 
   if (groupsLoading || messagesLoading) {
     return (
