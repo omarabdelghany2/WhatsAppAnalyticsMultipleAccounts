@@ -90,6 +90,29 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// Middleware to check if user is admin
+function authenticateAdmin(req, res, next) {
+    const userId = req.user.userId;
+
+    db.get('SELECT is_admin FROM users WHERE id = ?', [userId], (err, row) => {
+        if (err) {
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (!row || !row.is_admin) {
+            return res.status(403).json({
+                success: false,
+                error: 'Admin access required'
+            });
+        }
+
+        next();
+    });
+}
+
 // Config file path - use volume in production for persistence
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
@@ -517,7 +540,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 // Verify Token (check if user is authenticated)
 app.get('/api/auth/me', authenticateToken, (req, res) => {
-    db.get('SELECT id, username, email, created_at FROM users WHERE id = ?', [req.user.userId], (err, user) => {
+    db.get('SELECT id, username, email, is_admin, whatsapp_authenticated, created_at FROM users WHERE id = ?', [req.user.userId], (err, user) => {
         if (err) {
             console.error('Database error:', err);
             return res.status(500).json({
@@ -539,8 +562,43 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
                 id: user.id,
                 username: user.username,
                 email: user.email,
+                isAdmin: Boolean(user.is_admin),
+                whatsappAuthenticated: Boolean(user.whatsapp_authenticated),
                 createdAt: user.created_at
             }
+        });
+    });
+});
+
+// ============================================
+// ADMIN ENDPOINTS
+// ============================================
+
+// Get all users (admin only) - for Super Admin dashboard
+app.get('/api/admin/users', authenticateToken, authenticateAdmin, (req, res) => {
+    db.all(`
+        SELECT id, username, email, is_admin, whatsapp_authenticated, created_at
+        FROM users
+        ORDER BY whatsapp_authenticated DESC, created_at DESC
+    `, [], (err, users) => {
+        if (err) {
+            console.error('Error fetching users:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        res.json({
+            success: true,
+            users: users.map(user => ({
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                isAdmin: Boolean(user.is_admin),
+                whatsappAuthenticated: Boolean(user.whatsapp_authenticated),
+                createdAt: user.created_at
+            }))
         });
     });
 });
