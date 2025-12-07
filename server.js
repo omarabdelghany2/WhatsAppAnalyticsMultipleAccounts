@@ -2890,7 +2890,7 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
 
                 // Save to events table if we detected the event type
                 if (eventType && memberId) {
-                    const event = await createEventForUser(userId, userClient, memberId, eventType, groupName, groupId);
+                    const event = await createEventForUser(userId, userClient, memberId, eventType, groupName, groupId, timestamp);
                     if (event) {
                         console.log(`📝 User ${userId} - Detected ${eventType} event: ${memberName} in ${groupName}`);
                         broadcast({ type: 'event', event: event });
@@ -2938,7 +2938,7 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
 
         // Check if it's a voice/audio message - create CERTIFICATE event
         if (msg.type === 'ptt' || msg.type === 'audio') {
-            const event = await createEventForUser(userId, userClient, senderId, 'CERTIFICATE', groupName, groupId);
+            const event = await createEventForUser(userId, userClient, senderId, 'CERTIFICATE', groupName, groupId, timestamp);
             if (event) {
                 console.log(`🎤 User ${userId} - ${event.memberName} recorded certificate in ${groupName}`);
                 broadcast({ type: 'event', event: event });
@@ -2987,13 +2987,14 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
     }
 }
 
-async function createEventForUser(userId, userClient, memberId, eventType, groupName, groupId) {
+async function createEventForUser(userId, userClient, memberId, eventType, groupName, groupId, messageTimestamp = null) {
     try {
         const contact = await userClient.getContactById(memberId);
         const memberPhone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || memberId.split('@')[0]);
         const memberName = contact.pushname || contact.name || contact.verifiedName || memberPhone;
 
-        const timestamp = new Date();
+        // Use message timestamp if provided, otherwise use current time (for real-time events)
+        const timestamp = messageTimestamp || new Date();
         const eventDate = timestamp.toISOString().split('T')[0];
 
         const event = {
