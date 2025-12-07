@@ -21,20 +21,13 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      const userData = await login(email, password);
 
-      // Check if user is admin
-      const response = await fetch('/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      const data = await response.json();
+      console.log('User login data:', userData);
+      console.log('Is admin?', userData?.isAdmin);
 
-      console.log('User login data:', data);
-      console.log('Is admin?', data.user?.isAdmin);
-
-      if (data.success && data.user.isAdmin) {
+      // Check if user is admin (data is now available from login response)
+      if (userData?.isAdmin) {
         console.log('Redirecting admin to main page');
         // Admins go directly to main page (user selection)
         navigate('/');

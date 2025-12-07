@@ -593,6 +593,8 @@ const Index = () => {
             events={filteredEvents}
             groupName={selectedGroupName}
             groupId={selectedGroupId}
+            isViewingAsAdmin={isViewingAsAdmin}
+            viewingUserId={viewingUserId}
           />
         </div>
       </div>

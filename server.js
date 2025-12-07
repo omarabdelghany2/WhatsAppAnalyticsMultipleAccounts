@@ -517,7 +517,7 @@ app.post('/api/auth/login', async (req, res) => {
                 { expiresIn: JWT_EXPIRES_IN }
             );
 
-            console.log(`✅ User logged in: ${user.username} (${user.email})`);
+            console.log(`✅ User logged in: ${user.username} (${user.email}) - Admin: ${Boolean(user.is_admin)}`);
 
             res.json({
                 success: true,
@@ -525,7 +525,9 @@ app.post('/api/auth/login', async (req, res) => {
                 user: {
                     id: user.id,
                     username: user.username,
-                    email: user.email
+                    email: user.email,
+                    isAdmin: Boolean(user.is_admin),
+                    whatsappAuthenticated: Boolean(user.whatsapp_authenticated)
                 }
             });
         });

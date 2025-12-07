@@ -36,10 +36,12 @@ interface AnalyticsPanelProps {
   onDateFilterChange?: (date: string | null) => void;
   events?: Event[];
   groupName?: string;
-  groupId?: string;
+  groupId?: string | null;
+  isViewingAsAdmin?: boolean;
+  viewingUserId?: number | null;
 }
 
-export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, events = [], groupName = "All Groups", groupId }: AnalyticsPanelProps) {
+export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, events = [], groupName = "All Groups", groupId, isViewingAsAdmin = false, viewingUserId = null }: AnalyticsPanelProps) {
   const [mode, setMode] = useState<"all" | "specific" | "period">("specific");
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [startDate, setStartDate] = useState<Date>(() => new Date());
@@ -68,7 +70,15 @@ export function AnalyticsPanel({ analytics, translateMode, onDateFilterChange, e
     if (type === 'MEMBERS' && groupId) {
       setLoadingMembers(true);
       try {
-        const data = await api.getGroupMembers(groupId);
+        let data;
+        if (isViewingAsAdmin && viewingUserId) {
+          // Admin viewing another user's group members
+          data = await api.viewUserGroupMembers(viewingUserId, groupId);
+        } else {
+          // Regular user viewing own group members
+          data = await api.getGroupMembers(groupId);
+        }
+
         if (data.success) {
           setMembers(data.members);
         }

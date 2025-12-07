@@ -10,7 +10,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   register: (username: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
@@ -55,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<User> => {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: {
@@ -73,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('token', data.token);
+
+    return data.user;
   };
 
   const register = async (username: string, email: string, password: string) => {

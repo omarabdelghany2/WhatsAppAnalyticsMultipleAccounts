@@ -216,6 +216,8 @@ const AdminUserView = () => {
             events={filteredEvents}
             groupName={selectedGroupName}
             groupId={selectedGroupId}
+            isViewingAsAdmin={true}
+            viewingUserId={viewUserIdNum}
           />
         </div>
       </div>
