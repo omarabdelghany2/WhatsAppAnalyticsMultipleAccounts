@@ -7,6 +7,9 @@ import { Loader2, Smartphone, CheckCircle2, XCircle, LogOut } from "lucide-react
 import { useToast } from "@/hooks/use-toast";
 import QRCode from "react-qr-code";
 
+// Dynamic URL configuration for local development and production
+const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : '';
+
 export default function WhatsAppConnect() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -18,7 +21,7 @@ export default function WhatsAppConnect() {
 
   const checkWhatsAppStatus = async () => {
     try {
-      const response = await fetch('/api/whatsapp/status', {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/status`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -42,7 +45,7 @@ export default function WhatsAppConnect() {
   const initializeWhatsApp = async () => {
     setIsInitializing(true);
     try {
-      const response = await fetch('/api/whatsapp/init', {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/init`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -74,7 +77,7 @@ export default function WhatsAppConnect() {
   const fetchQRCode = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/whatsapp/qr', {
+      const response = await fetch(`${API_BASE_URL}/api/whatsapp/qr`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

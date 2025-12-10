@@ -11,6 +11,8 @@ const sqlite3 = require('sqlite3').verbose();
 const { translate } = require('@vitalets/google-translate-api');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const { MessageMedia, Poll } = require('whatsapp-web.js');
 
 // Configuration will be loaded from DATA_DIR below
 let config;
@@ -65,6 +67,14 @@ if (!fs.existsSync(DATA_DIR)) {
 // JWT Configuration
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const JWT_EXPIRES_IN = '1d'; // Token expires in 1 day
+
+// Multer Configuration for file uploads
+const upload = multer({
+    storage: multer.memoryStorage(), // Store files in memory for processing
+    limits: {
+        fileSize: 50 * 1024 * 1024 // 50MB limit
+    }
+});
 
 // JWT Authentication Middleware
 function authenticateToken(req, res, next) {
@@ -1308,6 +1318,45 @@ app.get('/api/groups', authenticateToken, (req, res) => {
     });
 });
 
+// Get all WhatsApp groups/chats for broadcast
+app.get('/api/whatsapp/all-chats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const userClient = whatsappClients.get(userId);
+
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready'
+            });
+        }
+
+        // Get all chats
+        const chats = await userClient.getChats();
+
+        // Filter only groups and extract relevant info
+        const groups = chats
+            .filter(chat => chat.isGroup)
+            .map(chat => ({
+                id: chat.id._serialized,
+                name: chat.name,
+                isGroup: chat.isGroup
+            }));
+
+        res.json({
+            success: true,
+            groups: groups,
+            count: groups.length
+        });
+    } catch (error) {
+        console.error('Error fetching all chats:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to fetch chats'
+        });
+    }
+});
+
 // Get all members of a specific group with their phone numbers
 app.get('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
     try {
@@ -1484,6 +1533,254 @@ app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
             });
         });
     });
+});
+
+// Send message to a group
+app.post('/api/messages/send', authenticateToken, upload.single('file'), async (req, res) => {
+    const userId = req.user.userId;
+    const { groupId, message, messageType, pollOptions } = req.body;
+    const file = req.file;
+
+    try {
+        // Check if user's WhatsApp client is ready
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp client not ready. Please connect your WhatsApp first.'
+            });
+        }
+
+        // Verify user has access to this group
+        const userGroups = userMonitoredGroups.get(userId);
+        if (!userGroups || !userGroups.has(groupId)) {
+            return res.status(403).json({
+                success: false,
+                error: 'You do not have access to this group'
+            });
+        }
+
+        // Get the WhatsApp chat object
+        const chat = await userClient.getChatById(groupId);
+        if (!chat) {
+            return res.status(404).json({
+                success: false,
+                error: 'Group not found'
+            });
+        }
+
+        let sentMessage;
+
+        // Handle different message types
+        if (messageType === 'poll' && pollOptions) {
+            // Send poll
+            const options = JSON.parse(pollOptions);
+            if (!options || options.length < 2) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Poll must have at least 2 options'
+                });
+            }
+
+            // Create Poll object (question, optionsArray, pollSendOptions)
+            const poll = new Poll(message, options, { allowMultipleAnswers: false });
+            sentMessage = await chat.sendMessage(poll);
+        } else if (file) {
+            // Send media (image, video, document)
+            const media = new MessageMedia(
+                file.mimetype,
+                file.buffer.toString('base64'),
+                file.originalname
+            );
+
+            sentMessage = await chat.sendMessage(media, {
+                caption: message || ''
+            });
+        } else if (message && message.trim()) {
+            // Send text message
+            sentMessage = await chat.sendMessage(message);
+        } else {
+            return res.status(400).json({
+                success: false,
+                error: 'Message content or file is required'
+            });
+        }
+
+        // Get sender info (the logged-in user)
+        const contact = await userClient.getContactById(sentMessage.from);
+        const senderName = contact.pushname || contact.name || contact.verifiedName || contact.number || 'You';
+
+        // Save sent message to database
+        const messageData = {
+            id: sentMessage.id._serialized,
+            groupId: groupId,
+            groupName: userGroups.get(groupId)?.name || 'Unknown',
+            sender: senderName,
+            senderId: sentMessage.from,
+            message: messageType === 'poll' ? `📊 Poll: ${message}` : (message || getMediaTypeLabel(file?.mimetype)),
+            timestamp: new Date(sentMessage.timestamp * 1000).toISOString()
+        };
+
+        db.run(`
+            INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            messageData.id,
+            userId,
+            messageData.groupId,
+            messageData.groupName,
+            messageData.sender,
+            messageData.senderId,
+            messageData.message,
+            messageData.timestamp
+        ], (err) => {
+            if (err) {
+                console.error('Error saving sent message to database:', err);
+            }
+        });
+
+        // Broadcast the new message via WebSocket
+        broadcast({
+            type: 'message',
+            userId: userId,
+            message: messageData
+        });
+
+        res.json({
+            success: true,
+            message: messageData
+        });
+    } catch (error) {
+        console.error('Error sending message:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to send message'
+        });
+    }
+});
+
+// Helper function to get media type label
+function getMediaTypeLabel(mimetype) {
+    if (!mimetype) return '[Media]';
+    if (mimetype.startsWith('image/')) return '[Image]';
+    if (mimetype.startsWith('video/')) return '[Video]';
+    if (mimetype.startsWith('audio/')) return '[Audio]';
+    return '[Document]';
+}
+
+// Broadcast message to multiple groups
+app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), async (req, res) => {
+    const userId = req.user.userId;
+    const { groupIds, message, messageType, pollOptions, gapTime } = req.body;
+    const file = req.file;
+
+    try {
+        // Validate inputs
+        if (!groupIds || !Array.isArray(JSON.parse(groupIds)) || JSON.parse(groupIds).length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'At least one group must be selected'
+            });
+        }
+
+        const parsedGroupIds = JSON.parse(groupIds);
+        const gapTimeMs = parseInt(gapTime) * 1000; // Convert seconds to milliseconds
+
+        // Ensure minimum gap time of 10 seconds
+        if (gapTimeMs < 10000) {
+            return res.status(400).json({
+                success: false,
+                error: 'Gap time must be at least 10 seconds'
+            });
+        }
+
+        // Check if user's WhatsApp client is ready
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp client not ready. Please connect your WhatsApp first.'
+            });
+        }
+
+        const results = [];
+        const errors = [];
+
+        // Send to each group with delay
+        for (let i = 0; i < parsedGroupIds.length; i++) {
+            const groupId = parsedGroupIds[i];
+
+            // Wait before sending to this group (except for the first one)
+            if (i > 0) {
+                console.log(`⏳ Waiting ${gapTime} seconds before next broadcast...`);
+                await new Promise(resolve => setTimeout(resolve, gapTimeMs));
+            }
+
+            try {
+                // Get the WhatsApp chat object
+                const chat = await userClient.getChatById(groupId);
+                if (!chat) {
+                    errors.push({ groupId, error: 'Group not found' });
+                    continue;
+                }
+
+                let sentMessage;
+
+                // Handle different message types (same logic as regular send)
+                if (messageType === 'poll' && pollOptions) {
+                    const options = JSON.parse(pollOptions);
+                    if (!options || options.length < 2) {
+                        errors.push({ groupId, error: 'Poll must have at least 2 options' });
+                        continue;
+                    }
+
+                    const poll = new Poll(message, options, { allowMultipleAnswers: false });
+                    sentMessage = await chat.sendMessage(poll);
+                } else if (file) {
+                    const media = new MessageMedia(
+                        file.mimetype,
+                        file.buffer.toString('base64'),
+                        file.originalname
+                    );
+
+                    sentMessage = await chat.sendMessage(media, {
+                        caption: message || ''
+                    });
+                } else if (message && message.trim()) {
+                    sentMessage = await chat.sendMessage(message);
+                } else {
+                    errors.push({ groupId, error: 'Message content or file is required' });
+                    continue;
+                }
+
+                results.push({
+                    groupId,
+                    messageId: sentMessage.id._serialized,
+                    success: true
+                });
+
+                console.log(`✅ Broadcast message sent to group ${groupId}`);
+            } catch (error) {
+                console.error(`❌ Error sending to group ${groupId}:`, error);
+                errors.push({ groupId, error: error.message });
+            }
+        }
+
+        res.json({
+            success: true,
+            results,
+            errors,
+            totalSent: results.length,
+            totalFailed: errors.length,
+            message: `Broadcast completed: ${results.length} sent, ${errors.length} failed`
+        });
+    } catch (error) {
+        console.error('Error in broadcast:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to broadcast message'
+        });
+    }
 });
 
 // Get events (joins/leaves) from all groups
@@ -2034,7 +2331,7 @@ function broadcast(data) {
 function findChromiumExecutable() {
     const { execSync } = require('child_process');
 
-    // Try to find chromium in nix store
+    // Try to find chromium in nix store (Railway/Linux)
     try {
         const chromiumPath = execSync('which chromium || find /nix/store -name chromium -type f 2>/dev/null | head -1', {
             encoding: 'utf8'
@@ -2048,6 +2345,21 @@ function findChromiumExecutable() {
         console.log('⚠️  Could not find chromium via which/find');
     }
 
+    // Try to find Chrome on macOS
+    const macChromePaths = [
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        process.env.HOME + '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    ];
+
+    for (const chromePath of macChromePaths) {
+        if (fs.existsSync(chromePath)) {
+            console.log('✅ Found Chrome at:', chromePath);
+            return chromePath;
+        }
+    }
+
+    console.log('⚠️  No Chrome/Chromium found, using Puppeteer default');
     // Return null to use default Puppeteer behavior
     return null;
 }

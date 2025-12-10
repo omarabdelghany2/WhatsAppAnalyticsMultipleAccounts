@@ -1,7 +1,6 @@
-// TEMPORARY FIX: Hardcoded Railway URL to bypass cache issues
-// TODO: Revert to dynamic detection after Railway cache is cleared
-const API_BASE_URL = '';  // Use relative URLs for Railway
-const WS_URL = 'wss://whatsappanalytics-productionn.up.railway.app/ws';
+// Dynamic URL configuration for local development and production
+const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : '';  // localhost for dev, relative URLs for production
+const WS_URL = import.meta.env.DEV ? 'ws://localhost:3000/ws' : 'wss://whatsappanalytics-productionn.up.railway.app/ws';
 
 // Helper to get auth headers
 function getAuthHeaders(): HeadersInit {
@@ -97,6 +96,76 @@ export const api = {
     if (groupId) params.append('groupId', groupId);
     const response = await fetch(`${API_BASE_URL}/api/search?${params}`, {
       headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[]) {
+    const formData = new FormData();
+    formData.append('groupId', groupId);
+    formData.append('message', message);
+
+    if (file) {
+      formData.append('file', file);
+    }
+
+    if (messageType) {
+      formData.append('messageType', messageType);
+    }
+
+    if (pollOptions && pollOptions.length > 0) {
+      formData.append('pollOptions', JSON.stringify(pollOptions));
+    }
+
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/messages/send`, {
+      method: 'POST',
+      headers: headers,
+      body: formData,
+    });
+    return response.json();
+  },
+
+  async getAllChats() {
+    const response = await fetch(`${API_BASE_URL}/api/whatsapp/all-chats`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async broadcastMessage(groupIds: string[], message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number) {
+    const formData = new FormData();
+    formData.append('groupIds', JSON.stringify(groupIds));
+    formData.append('message', message);
+    formData.append('gapTime', (gapTime || 10).toString());
+
+    if (file) {
+      formData.append('file', file);
+    }
+
+    if (messageType) {
+      formData.append('messageType', messageType);
+    }
+
+    if (pollOptions && pollOptions.length > 0) {
+      formData.append('pollOptions', JSON.stringify(pollOptions));
+    }
+
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/messages/broadcast`, {
+      method: 'POST',
+      headers: headers,
+      body: formData,
     });
     return response.json();
   },

@@ -3,6 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Languages } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MessageInput } from "./MessageInput";
 
 interface Message {
   id: string;
@@ -15,9 +16,11 @@ interface Message {
 interface ChatViewProps {
   messages: Message[];
   groupName: string;
+  groupId: string;
+  onMessageSent?: () => void;
 }
 
-export function ChatView({ messages, groupName }: ChatViewProps) {
+export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatViewProps) {
   const [translatedMessages, setTranslatedMessages] = useState<Map<string, string>>(new Map());
   const [translatingMessages, setTranslatingMessages] = useState<Set<string>>(new Set());
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -150,6 +153,7 @@ export function ChatView({ messages, groupName }: ChatViewProps) {
           </div>
         </div>
       </div>
+      <MessageInput groupId={groupId} onMessageSent={onMessageSent} />
     </div>
   );
 }

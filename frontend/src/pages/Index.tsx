@@ -14,6 +14,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import AdminUserSelector from "@/components/AdminUserSelector";
 import { Badge } from "@/components/ui/badge";
 
+// Dynamic URL configuration for local development and production
+const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : '';
+
 const Index = () => {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [translateMode, setTranslateMode] = useState(false);
@@ -119,7 +122,7 @@ const Index = () => {
         const token = localStorage.getItem('token');
         if (!token) return;
 
-        const response = await fetch('/api/whatsapp/status', {
+        const response = await fetch(`${API_BASE_URL}/api/whatsapp/status`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -583,6 +586,11 @@ const Index = () => {
           <ChatView
             messages={transformedMessages}
             groupName={selectedGroupName}
+            groupId={selectedGroupId || ""}
+            onMessageSent={() => {
+              refetchMessages();
+              refetchAllMessages();
+            }}
           />
         </div>
         <div className="col-span-3 h-full">

@@ -49,14 +49,14 @@ const AdminUserView = () => {
   });
 
   // Fetch all messages for this user
-  const { data: allMessagesData } = useQuery({
+  const { data: allMessagesData, refetch: refetchAllMessages } = useQuery({
     queryKey: ['admin-view-all-messages', viewUserIdNum],
     queryFn: () => api.viewUserMessages(viewUserIdNum, 100, 0),
     enabled: viewUserIdNum > 0 && !!groupsData?.groups?.length,
   });
 
   // Fetch messages for selected group
-  const { data: selectedGroupMessagesData, isLoading: messagesLoading } = useQuery({
+  const { data: selectedGroupMessagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ['admin-view-group-messages', viewUserIdNum, selectedGroupId],
     queryFn: () => {
       if (selectedGroupId) {
@@ -206,6 +206,11 @@ const AdminUserView = () => {
           <ChatView
             messages={selectedGroupMessages}
             groupName={selectedGroupName}
+            groupId={selectedGroupId || ""}
+            onMessageSent={() => {
+              refetchMessages();
+              refetchAllMessages();
+            }}
           />
         </div>
         <div className="col-span-3 h-full">
