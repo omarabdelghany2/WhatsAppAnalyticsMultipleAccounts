@@ -47,6 +47,7 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
   const [messageType, setMessageType] = useState<'text' | 'poll'>('text');
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [allowMultipleAnswers, setAllowMultipleAnswers] = useState(false);
   const [gapTime, setGapTime] = useState(10); // Default 10 seconds
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [allGroups, setAllGroups] = useState<WhatsAppGroup[]>([]);
@@ -177,7 +178,8 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
         selectedFile || undefined,
         messageType,
         pollOpts,
-        gapTime
+        gapTime,
+        allowMultipleAnswers
       );
 
       clearInterval(progressInterval);
@@ -194,6 +196,7 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
         setMessage('');
         setPollQuestion('');
         setPollOptions(['', '']);
+        setAllowMultipleAnswers(false);
         setMessageType('text');
         handleRemoveFile();
         setSelectedGroups(new Set());
@@ -485,6 +488,19 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
                   <Plus className="h-4 w-4 mr-2" />
                   Add Option
                 </Button>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="allowMultipleBroadcast"
+                  checked={allowMultipleAnswers}
+                  onCheckedChange={(checked) => setAllowMultipleAnswers(checked as boolean)}
+                />
+                <label
+                  htmlFor="allowMultipleBroadcast"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                >
+                  Allow multiple answers
+                </label>
               </div>
             </div>
           )}

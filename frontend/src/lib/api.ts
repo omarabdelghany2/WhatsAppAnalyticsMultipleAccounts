@@ -100,7 +100,7 @@ export const api = {
     return response.json();
   },
 
-  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[]) {
+  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], allowMultipleAnswers?: boolean) {
     const formData = new FormData();
     formData.append('groupId', groupId);
     formData.append('message', message);
@@ -115,6 +115,10 @@ export const api = {
 
     if (pollOptions && pollOptions.length > 0) {
       formData.append('pollOptions', JSON.stringify(pollOptions));
+    }
+
+    if (allowMultipleAnswers !== undefined) {
+      formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
     }
 
     const token = localStorage.getItem('token');
@@ -138,7 +142,7 @@ export const api = {
     return response.json();
   },
 
-  async broadcastMessage(groupIds: string[], message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number) {
+  async broadcastMessage(groupIds: string[], message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean) {
     const formData = new FormData();
     formData.append('groupIds', JSON.stringify(groupIds));
     formData.append('message', message);
@@ -154,6 +158,10 @@ export const api = {
 
     if (pollOptions && pollOptions.length > 0) {
       formData.append('pollOptions', JSON.stringify(pollOptions));
+    }
+
+    if (allowMultipleAnswers !== undefined) {
+      formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
     }
 
     const token = localStorage.getItem('token');

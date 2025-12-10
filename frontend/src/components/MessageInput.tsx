@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
+import { Checkbox } from './ui/checkbox';
 import {
   Send,
   Paperclip,
@@ -40,6 +41,7 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
   const [showBroadcastDialog, setShowBroadcastDialog] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [allowMultipleAnswers, setAllowMultipleAnswers] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -120,13 +122,15 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
         pollQuestion,
         undefined,
         'poll',
-        validOptions
+        validOptions,
+        allowMultipleAnswers
       );
 
       if (result.success) {
         toast.success('Poll sent successfully');
         setPollQuestion('');
         setPollOptions(['', '']);
+        setAllowMultipleAnswers(false);
         setShowPollDialog(false);
         onMessageSent?.();
       } else {
@@ -319,6 +323,19 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
                     <Plus className="h-4 w-4 mr-2" />
                     Add Option
                   </Button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="allowMultiple"
+                    checked={allowMultipleAnswers}
+                    onCheckedChange={(checked) => setAllowMultipleAnswers(checked as boolean)}
+                  />
+                  <label
+                    htmlFor="allowMultiple"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    Allow multiple answers
+                  </label>
                 </div>
                 <Button
                   onClick={handleSendPoll}

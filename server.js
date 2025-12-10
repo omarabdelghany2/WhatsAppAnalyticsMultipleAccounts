@@ -1538,7 +1538,7 @@ app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
 // Send message to a group
 app.post('/api/messages/send', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupId, message, messageType, pollOptions } = req.body;
+    const { groupId, message, messageType, pollOptions, allowMultipleAnswers } = req.body;
     const file = req.file;
 
     try {
@@ -1583,7 +1583,8 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
             }
 
             // Create Poll object (question, optionsArray, pollSendOptions)
-            const poll = new Poll(message, options, { allowMultipleAnswers: false });
+            const allowMultiple = allowMultipleAnswers === 'true' || allowMultipleAnswers === true;
+            const poll = new Poll(message, options, { allowMultipleAnswers: allowMultiple });
             sentMessage = await chat.sendMessage(poll);
         } else if (file) {
             // Send media (image, video, document)
@@ -1671,7 +1672,7 @@ function getMediaTypeLabel(mimetype) {
 // Broadcast message to multiple groups
 app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupIds, message, messageType, pollOptions, gapTime } = req.body;
+    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers } = req.body;
     const file = req.file;
 
     try {
@@ -1734,7 +1735,8 @@ app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), as
                         continue;
                     }
 
-                    const poll = new Poll(message, options, { allowMultipleAnswers: false });
+                    const allowMultiple = allowMultipleAnswers === 'true' || allowMultipleAnswers === true;
+                    const poll = new Poll(message, options, { allowMultipleAnswers: allowMultiple });
                     sentMessage = await chat.sendMessage(poll);
                 } else if (file) {
                     const media = new MessageMedia(
