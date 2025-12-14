@@ -336,6 +336,39 @@ function initializeDatabase() {
             }
         });
 
+        // Add replied_to_message_id column to messages table for reply functionality
+        db.run(`
+            ALTER TABLE messages ADD COLUMN replied_to_message_id TEXT
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding replied_to_message_id column:', err);
+            } else if (!err) {
+                console.log('✅ Added replied_to_message_id column to messages table');
+            }
+        });
+
+        // Add replied_to_sender column to messages table
+        db.run(`
+            ALTER TABLE messages ADD COLUMN replied_to_sender TEXT
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding replied_to_sender column:', err);
+            } else if (!err) {
+                console.log('✅ Added replied_to_sender column to messages table');
+            }
+        });
+
+        // Add replied_to_message column to messages table
+        db.run(`
+            ALTER TABLE messages ADD COLUMN replied_to_message TEXT
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding replied_to_message column:', err);
+            } else if (!err) {
+                console.log('✅ Added replied_to_message column to messages table');
+            }
+        });
+
         // Create indexes for better query performance
         db.run(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
@@ -1623,7 +1656,7 @@ app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
 // Send message to a group
 app.post('/api/messages/send', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupId, message, messageType, pollOptions, allowMultipleAnswers } = req.body;
+    const { groupId, message, messageType, pollOptions, allowMultipleAnswers, replyToMessageId } = req.body;
     const file = req.file;
 
     try {
@@ -1684,7 +1717,20 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
             });
         } else if (message && message.trim()) {
             // Send text message
-            sentMessage = await chat.sendMessage(message);
+            if (replyToMessageId) {
+                // Fetch the message to reply to
+                const messages = await chat.fetchMessages({ limit: 1000 });
+                const messageToReply = messages.find(msg => msg.id._serialized === replyToMessageId);
+
+                if (messageToReply) {
+                    sentMessage = await messageToReply.reply(message);
+                } else {
+                    // If message not found, send regular message
+                    sentMessage = await chat.sendMessage(message);
+                }
+            } else {
+                sentMessage = await chat.sendMessage(message);
+            }
         } else {
             return res.status(400).json({
                 success: false,
@@ -1696,6 +1742,27 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
         const contact = await userClient.getContactById(sentMessage.from);
         const senderName = contact.pushname || contact.name || contact.verifiedName || contact.number || 'You';
 
+        // Get reply information if this is a reply
+        let repliedToMessageId = null;
+        let repliedToSender = null;
+        let repliedToMessage = null;
+
+        if (sentMessage.hasQuotedMsg) {
+            const quotedMsg = await sentMessage.getQuotedMessage();
+            if (quotedMsg) {
+                repliedToMessageId = quotedMsg.id._serialized;
+                repliedToMessage = quotedMsg.body || '[Media]';
+
+                // Get sender of quoted message
+                try {
+                    const quotedContact = await userClient.getContactById(quotedMsg.from);
+                    repliedToSender = quotedContact.pushname || quotedContact.name || quotedContact.number || 'Unknown';
+                } catch (err) {
+                    repliedToSender = 'Unknown';
+                }
+            }
+        }
+
         // Save sent message to database
         const messageData = {
             id: sentMessage.id._serialized,
@@ -1704,12 +1771,15 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
             sender: senderName,
             senderId: sentMessage.from,
             message: messageType === 'poll' ? `📊 Poll: ${message}` : (message || getMediaTypeLabel(file?.mimetype)),
-            timestamp: new Date(sentMessage.timestamp * 1000).toISOString()
+            timestamp: new Date(sentMessage.timestamp * 1000).toISOString(),
+            repliedToMessageId,
+            repliedToSender,
+            repliedToMessage
         };
 
         db.run(`
-            INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp, replied_to_message_id, replied_to_sender, replied_to_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             messageData.id,
             userId,
@@ -1718,7 +1788,10 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
             messageData.sender,
             messageData.senderId,
             messageData.message,
-            messageData.timestamp
+            messageData.timestamp,
+            messageData.repliedToMessageId,
+            messageData.repliedToSender,
+            messageData.repliedToMessage
         ], (err) => {
             if (err) {
                 console.error('Error saving sent message to database:', err);
@@ -3470,12 +3543,12 @@ async function checkMessagesInGroup(userId, userClient, groupId, groupInfo) {
             // Save messages to database with user_id (only if there are processed messages)
             if (processedMessages.length > 0) {
                 const insertStmt = db.prepare(`
-                    INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO messages (id, user_id, group_id, group_name, sender, sender_id, message, timestamp, replied_to_message_id, replied_to_sender, replied_to_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
                 for (const msg of processedMessages) {
-                    insertStmt.run(msg.id, userId, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
+                    insertStmt.run(msg.id, userId, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp, msg.repliedToMessageId, msg.repliedToSender, msg.repliedToMessage);
                 }
 
                 insertStmt.finalize();
@@ -3640,6 +3713,33 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             }
         }
 
+        // Get reply information if this message is a reply
+        let repliedToMessageId = null;
+        let repliedToSender = null;
+        let repliedToMessage = null;
+
+        if (msg.hasQuotedMsg) {
+            try {
+                const quotedMsg = await msg.getQuotedMessage();
+                if (quotedMsg) {
+                    repliedToMessageId = quotedMsg.id._serialized;
+                    repliedToMessage = quotedMsg.body || '[Media]';
+
+                    // Get sender of quoted message
+                    try {
+                        const quotedContact = await userClient.getContactById(quotedMsg.from);
+                        const quotedPhone = quotedContact.id.user || quotedContact.number || '';
+                        const quotedName = quotedContact.pushname || quotedContact.name || quotedPhone;
+                        repliedToSender = quotedName;
+                    } catch (err) {
+                        repliedToSender = 'Unknown';
+                    }
+                }
+            } catch (err) {
+                console.log(`⚠️  User ${userId} - Failed to get quoted message:`, err.message);
+            }
+        }
+
         // Save all messages to database
         return {
             id: msg.id._serialized,
@@ -3648,7 +3748,10 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
             sender: senderDisplay,
             senderId: senderId,
             message: messageContent,
-            timestamp: timestamp.toISOString()
+            timestamp: timestamp.toISOString(),
+            repliedToMessageId,
+            repliedToSender,
+            repliedToMessage
         };
     } catch (error) {
         console.error(`❌ Error processing message for user ${userId}:`, error.message);
@@ -3814,12 +3917,12 @@ async function checkMessages(groupId, groupInfo) {
 
             // Save messages to SQLite database
             const insertStmt = db.prepare(`
-                INSERT OR REPLACE INTO messages (id, group_id, group_name, sender, sender_id, message, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO messages (id, group_id, group_name, sender, sender_id, message, timestamp, replied_to_message_id, replied_to_sender, replied_to_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             for (const msg of processedMessages) {
-                insertStmt.run(msg.id, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp);
+                insertStmt.run(msg.id, msg.groupId, msg.groupName, msg.sender, msg.senderId, msg.message, msg.timestamp, msg.repliedToMessageId, msg.repliedToSender, msg.repliedToMessage);
             }
 
             insertStmt.finalize();

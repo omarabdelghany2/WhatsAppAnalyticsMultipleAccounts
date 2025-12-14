@@ -21,6 +21,9 @@ export interface Message {
   sender: string;
   message: string;
   timestamp: string;
+  replied_to_message_id?: string | null;
+  replied_to_sender?: string | null;
+  replied_to_message?: string | null;
 }
 
 export interface Event {
@@ -100,7 +103,7 @@ export const api = {
     return response.json();
   },
 
-  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], allowMultipleAnswers?: boolean) {
+  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], allowMultipleAnswers?: boolean, replyToMessageId?: string) {
     const formData = new FormData();
     formData.append('groupId', groupId);
     formData.append('message', message);
@@ -119,6 +122,10 @@ export const api = {
 
     if (allowMultipleAnswers !== undefined) {
       formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
+    }
+
+    if (replyToMessageId) {
+      formData.append('replyToMessageId', replyToMessageId);
     }
 
     const token = localStorage.getItem('token');
