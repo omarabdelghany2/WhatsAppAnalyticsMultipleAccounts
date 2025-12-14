@@ -14,7 +14,8 @@ import {
   Plus,
   Trash2,
   Radio,
-  Calendar
+  Calendar,
+  Reply
 } from 'lucide-react';
 import {
   Dialog,
@@ -29,12 +30,20 @@ import { api } from '../lib/api';
 import { BroadcastDialog } from './BroadcastDialog';
 import { ScheduledBroadcastsDialog } from './ScheduledBroadcastsDialog';
 
+interface ReplyingToMessage {
+  id: string;
+  sender: string;
+  content: string;
+}
+
 interface MessageInputProps {
   groupId: string;
   onMessageSent?: () => void;
+  replyingTo?: ReplyingToMessage | null;
+  onCancelReply?: () => void;
 }
 
-export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
+export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply }: MessageInputProps) {
   const [message, setMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
@@ -86,13 +95,17 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
         groupId,
         message,
         selectedFile || undefined,
-        'text'
+        'text',
+        undefined,
+        undefined,
+        replyingTo?.id
       );
 
       if (result.success) {
         toast.success('Message sent successfully');
         setMessage('');
         handleRemoveFile();
+        onCancelReply?.(); // Clear reply state
         onMessageSent?.();
       } else {
         toast.error(result.error || 'Failed to send message');
@@ -174,6 +187,31 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
 
   return (
     <div className="border-t bg-white dark:bg-gray-800 p-4 space-y-3">
+      {/* Replying To Banner */}
+      {replyingTo && (
+        <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 rounded">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Reply className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                Replying to {replyingTo.sender}
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 truncate">
+                {replyingTo.content}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCancelReply}
+            className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* File Preview */}
       {selectedFile && (
         <div className="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-700 rounded-lg">

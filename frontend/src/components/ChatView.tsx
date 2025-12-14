@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Languages } from "lucide-react";
+import { Languages, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MessageInput } from "./MessageInput";
 
@@ -11,6 +11,9 @@ interface Message {
   content: string;
   timestamp: string;
   isOwn: boolean;
+  replied_to_message_id?: string | null;
+  replied_to_sender?: string | null;
+  replied_to_message?: string | null;
 }
 
 interface ChatViewProps {
@@ -23,6 +26,8 @@ interface ChatViewProps {
 export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatViewProps) {
   const [translatedMessages, setTranslatedMessages] = useState<Map<string, string>>(new Map());
   const [translatingMessages, setTranslatingMessages] = useState<Set<string>>(new Set());
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
@@ -115,22 +120,50 @@ export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatVi
             {messages.map((message) => {
               const translation = translatedMessages.get(message.id);
               const isTranslating = translatingMessages.has(message.id);
+              const isHovered = hoveredMessageId === message.id;
 
               return (
                 <div
                   key={message.id}
                   className="flex gap-2 items-start justify-start"
+                  onMouseEnter={() => setHoveredMessageId(message.id)}
+                  onMouseLeave={() => setHoveredMessageId(null)}
                 >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 opacity-0 hover:opacity-100 transition-opacity"
-                    onClick={() => handleTranslateMessage(message.id, message.content)}
-                    disabled={isTranslating}
-                  >
-                    <Languages className={cn("h-4 w-4", isTranslating && "animate-pulse")} />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn("h-8 w-8 transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
+                      onClick={() => setReplyingTo(message)}
+                      title="Reply to this message"
+                    >
+                      <Reply className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn("h-8 w-8 transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
+                      onClick={() => handleTranslateMessage(message.id, message.content)}
+                      disabled={isTranslating}
+                      title="Translate message"
+                    >
+                      <Languages className={cn("h-4 w-4", isTranslating && "animate-pulse")} />
+                    </Button>
+                  </div>
                   <div className="max-w-[70%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
+                    {/* Show replied-to message if exists */}
+                    {message.replied_to_message_id && message.replied_to_sender && (
+                      <div className="mb-2 pb-2 border-b border-current/20">
+                        <div className="flex items-center gap-1 text-xs opacity-70 mb-1">
+                          <Reply className="h-3 w-3" />
+                          <span className="font-semibold">{message.replied_to_sender}</span>
+                        </div>
+                        <p className="text-xs italic opacity-60 truncate">
+                          {message.replied_to_message}
+                        </p>
+                      </div>
+                    )}
+
                     <p className="text-xs font-semibold mb-1 opacity-70">{message.sender}</p>
                     <p className="text-sm break-words">
                       {message.content}
@@ -153,7 +186,12 @@ export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatVi
           </div>
         </div>
       </div>
-      <MessageInput groupId={groupId} onMessageSent={onMessageSent} />
+      <MessageInput
+        groupId={groupId}
+        onMessageSent={onMessageSent}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
+      />
     </div>
   );
 }
