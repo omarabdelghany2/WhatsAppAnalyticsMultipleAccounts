@@ -178,6 +178,70 @@ export const api = {
     return response.json();
   },
 
+  async schedulebroadcast(groupIds: string[], message: string, scheduledTime: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean) {
+    const formData = new FormData();
+    formData.append('groupIds', JSON.stringify(groupIds));
+    formData.append('message', message);
+    formData.append('scheduledTime', scheduledTime);
+    formData.append('gapTime', (gapTime || 10).toString());
+
+    if (file) {
+      formData.append('file', file);
+    }
+
+    if (messageType) {
+      formData.append('messageType', messageType);
+    }
+
+    if (pollOptions && pollOptions.length > 0) {
+      formData.append('pollOptions', JSON.stringify(pollOptions));
+    }
+
+    if (allowMultipleAnswers !== undefined) {
+      formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
+    }
+
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/messages/broadcast/schedule`, {
+      method: 'POST',
+      headers: headers,
+      body: formData,
+    });
+    return response.json();
+  },
+
+  async getScheduledBroadcasts(status?: 'pending' | 'sent' | 'failed' | 'all') {
+    const url = status && status !== 'all'
+      ? `${API_BASE_URL}/api/messages/broadcast/scheduled?status=${status}`
+      : `${API_BASE_URL}/api/messages/broadcast/scheduled`;
+    const response = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async cancelScheduledBroadcast(scheduleId: number) {
+    const response = await fetch(`${API_BASE_URL}/api/messages/broadcast/scheduled/${scheduleId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async updateScheduledBroadcastTime(scheduleId: number, scheduledTime: string) {
+    const response = await fetch(`${API_BASE_URL}/api/messages/broadcast/scheduled/${scheduleId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ scheduledTime }),
+    });
+    return response.json();
+  },
+
   async getStats(date?: string) {
     const url = date ? `${API_BASE_URL}/api/stats?date=${encodeURIComponent(date)}` : `${API_BASE_URL}/api/stats`;
     const response = await fetch(url, {

@@ -13,6 +13,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { MessageMedia, Poll } = require('whatsapp-web.js');
+const schedule = require('node-schedule');
 
 // Configuration will be loaded from DATA_DIR below
 let config;
@@ -240,6 +241,29 @@ function initializeDatabase() {
             )
         `);
 
+        // Scheduled broadcasts table (stores broadcasts scheduled for future execution)
+        db.run(`
+            CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                group_ids TEXT NOT NULL,
+                message TEXT,
+                message_type TEXT DEFAULT 'text',
+                poll_options TEXT,
+                allow_multiple_answers BOOLEAN DEFAULT 0,
+                gap_time INTEGER DEFAULT 10,
+                scheduled_time DATETIME NOT NULL,
+                status TEXT DEFAULT 'pending',
+                file_data TEXT,
+                file_mimetype TEXT,
+                file_name TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                executed_at DATETIME,
+                result_summary TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
         // Add date column to existing events table if it doesn't exist
         db.run(`
             ALTER TABLE events ADD COLUMN date TEXT
@@ -327,6 +351,9 @@ function initializeDatabase() {
         db.run(`CREATE INDEX IF NOT EXISTS idx_events_date_member ON events(date, member_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_monitored_groups_user_id ON monitored_groups(user_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_monitored_groups_group_id ON monitored_groups(group_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_user_id ON scheduled_broadcasts(user_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_scheduled_time ON scheduled_broadcasts(scheduled_time)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_status ON scheduled_broadcasts(status)`);
 
         console.log('✅ Database tables initialized');
     });
@@ -1783,6 +1810,276 @@ app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), as
             error: error.message || 'Failed to broadcast message'
         });
     }
+});
+
+// Schedule a broadcast for future execution
+app.post('/api/messages/broadcast/schedule', authenticateToken, upload.single('file'), async (req, res) => {
+    const userId = req.user.userId;
+    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers, scheduledTime } = req.body;
+    const file = req.file;
+
+    try {
+        // Validate inputs
+        if (!groupIds || !Array.isArray(JSON.parse(groupIds)) || JSON.parse(groupIds).length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'At least one group must be selected'
+            });
+        }
+
+        if (!scheduledTime) {
+            return res.status(400).json({
+                success: false,
+                error: 'Scheduled time is required'
+            });
+        }
+
+        const scheduledDate = new Date(scheduledTime);
+        const now = new Date();
+
+        // Validate scheduled time is in the future
+        if (scheduledDate <= now) {
+            return res.status(400).json({
+                success: false,
+                error: 'Scheduled time must be in the future'
+            });
+        }
+
+        const parsedGroupIds = JSON.parse(groupIds);
+
+        // Store file as base64 if present
+        let fileData = null;
+        let fileMimetype = null;
+        let fileName = null;
+        if (file) {
+            fileData = file.buffer.toString('base64');
+            fileMimetype = file.mimetype;
+            fileName = file.originalname;
+        }
+
+        // Insert scheduled broadcast into database
+        db.run(`
+            INSERT INTO scheduled_broadcasts (
+                user_id, group_ids, message, message_type, poll_options,
+                allow_multiple_answers, gap_time, scheduled_time, status,
+                file_data, file_mimetype, file_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            userId,
+            JSON.stringify(parsedGroupIds),
+            message || null,
+            messageType || 'text',
+            pollOptions || null,
+            allowMultipleAnswers === 'true' || allowMultipleAnswers === true ? 1 : 0,
+            parseInt(gapTime) || 10,
+            scheduledDate.toISOString(),
+            'pending',
+            fileData,
+            fileMimetype,
+            fileName
+        ], function(err) {
+            if (err) {
+                console.error('Error scheduling broadcast:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Failed to schedule broadcast'
+                });
+            }
+
+            console.log(`📅 Broadcast scheduled for ${scheduledDate.toISOString()} (ID: ${this.lastID})`);
+            res.json({
+                success: true,
+                scheduleId: this.lastID,
+                scheduledTime: scheduledDate.toISOString(),
+                message: `Broadcast scheduled for ${scheduledDate.toLocaleString()}`
+            });
+        });
+    } catch (error) {
+        console.error('Error scheduling broadcast:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to schedule broadcast'
+        });
+    }
+});
+
+// Get user's scheduled broadcasts
+app.get('/api/messages/broadcast/scheduled', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const status = req.query.status || 'all'; // 'pending', 'sent', 'failed', 'all'
+
+    let query = `
+        SELECT id, group_ids, message, message_type, poll_options,
+               allow_multiple_answers, gap_time, scheduled_time, status,
+               created_at, executed_at, result_summary,
+               (file_data IS NOT NULL) as has_file, file_name
+        FROM scheduled_broadcasts
+        WHERE user_id = ?
+    `;
+
+    const params = [userId];
+
+    if (status !== 'all') {
+        query += ' AND status = ?';
+        params.push(status);
+    }
+
+    query += ' ORDER BY scheduled_time DESC';
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            console.error('Error fetching scheduled broadcasts:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to fetch scheduled broadcasts'
+            });
+        }
+
+        // Parse JSON fields
+        const broadcasts = rows.map(row => ({
+            ...row,
+            group_ids: JSON.parse(row.group_ids),
+            poll_options: row.poll_options ? JSON.parse(row.poll_options) : null,
+            allow_multiple_answers: row.allow_multiple_answers === 1,
+            has_file: row.has_file === 1
+        }));
+
+        res.json({
+            success: true,
+            broadcasts
+        });
+    });
+});
+
+// Cancel (delete) a scheduled broadcast
+app.delete('/api/messages/broadcast/scheduled/:id', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const scheduleId = req.params.id;
+
+    // First check if the broadcast belongs to the user and is still pending
+    db.get(`
+        SELECT id, status, scheduled_time
+        FROM scheduled_broadcasts
+        WHERE id = ? AND user_id = ?
+    `, [scheduleId, userId], (err, row) => {
+        if (err) {
+            console.error('Error checking scheduled broadcast:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to check scheduled broadcast'
+            });
+        }
+
+        if (!row) {
+            return res.status(404).json({
+                success: false,
+                error: 'Scheduled broadcast not found'
+            });
+        }
+
+        if (row.status !== 'pending') {
+            return res.status(400).json({
+                success: false,
+                error: `Cannot cancel a broadcast with status: ${row.status}`
+            });
+        }
+
+        // Delete the scheduled broadcast
+        db.run(`
+            DELETE FROM scheduled_broadcasts
+            WHERE id = ? AND user_id = ?
+        `, [scheduleId, userId], function(err) {
+            if (err) {
+                console.error('Error deleting scheduled broadcast:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Failed to cancel scheduled broadcast'
+                });
+            }
+
+            console.log(`🗑️ Scheduled broadcast ${scheduleId} cancelled by user ${userId}`);
+            res.json({
+                success: true,
+                message: 'Scheduled broadcast cancelled successfully'
+            });
+        });
+    });
+});
+
+// Update scheduled broadcast time
+app.put('/api/messages/broadcast/scheduled/:id', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const scheduleId = req.params.id;
+    const { scheduledTime } = req.body;
+
+    if (!scheduledTime) {
+        return res.status(400).json({
+            success: false,
+            error: 'New scheduled time is required'
+        });
+    }
+
+    const newScheduledDate = new Date(scheduledTime);
+    const now = new Date();
+
+    // Validate scheduled time is in the future
+    if (newScheduledDate <= now) {
+        return res.status(400).json({
+            success: false,
+            error: 'Scheduled time must be in the future'
+        });
+    }
+
+    // First check if the broadcast belongs to the user and is still pending
+    db.get(`
+        SELECT id, status
+        FROM scheduled_broadcasts
+        WHERE id = ? AND user_id = ?
+    `, [scheduleId, userId], (err, row) => {
+        if (err) {
+            console.error('Error checking scheduled broadcast:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to check scheduled broadcast'
+            });
+        }
+
+        if (!row) {
+            return res.status(404).json({
+                success: false,
+                error: 'Scheduled broadcast not found'
+            });
+        }
+
+        if (row.status !== 'pending') {
+            return res.status(400).json({
+                success: false,
+                error: `Cannot update a broadcast with status: ${row.status}`
+            });
+        }
+
+        // Update the scheduled time
+        db.run(`
+            UPDATE scheduled_broadcasts
+            SET scheduled_time = ?
+            WHERE id = ? AND user_id = ?
+        `, [newScheduledDate.toISOString(), scheduleId, userId], function(err) {
+            if (err) {
+                console.error('Error updating scheduled broadcast:', err);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Failed to update scheduled broadcast'
+                });
+            }
+
+            console.log(`📅 Scheduled broadcast ${scheduleId} updated to ${newScheduledDate.toISOString()}`);
+            res.json({
+                success: true,
+                scheduledTime: newScheduledDate.toISOString(),
+                message: `Scheduled time updated to ${newScheduledDate.toLocaleString()}`
+            });
+        });
+    });
 });
 
 // Get events (joins/leaves) from all groups
@@ -3773,6 +4070,177 @@ if (process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT) {
         }
     });
 }
+
+// ============================================
+// SCHEDULED BROADCAST EXECUTOR
+// ============================================
+
+// Function to execute a scheduled broadcast
+async function executeScheduledBroadcast(broadcast) {
+    const userId = broadcast.user_id;
+    const groupIds = JSON.parse(broadcast.group_ids);
+    const message = broadcast.message;
+    const messageType = broadcast.message_type;
+    const pollOptions = broadcast.poll_options ? JSON.parse(broadcast.poll_options) : null;
+    const gapTime = broadcast.gap_time || 10;
+    const gapTimeMs = gapTime * 1000;
+    const allowMultipleAnswers = broadcast.allow_multiple_answers === 1;
+
+    console.log(`📤 Executing scheduled broadcast ${broadcast.id} for user ${userId}`);
+
+    try {
+        // Check if user's WhatsApp client is ready
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
+            throw new Error('WhatsApp client not ready');
+        }
+
+        const results = [];
+        const errors = [];
+
+        // Reconstruct file from base64 if present
+        let file = null;
+        if (broadcast.file_data && broadcast.file_mimetype && broadcast.file_name) {
+            file = {
+                buffer: Buffer.from(broadcast.file_data, 'base64'),
+                mimetype: broadcast.file_mimetype,
+                originalname: broadcast.file_name
+            };
+        }
+
+        // Send to each group with delay (same logic as immediate broadcast)
+        for (let i = 0; i < groupIds.length; i++) {
+            const groupId = groupIds[i];
+
+            // Wait before sending to this group (except for the first one)
+            if (i > 0) {
+                console.log(`⏳ Waiting ${gapTime} seconds before next scheduled broadcast...`);
+                await new Promise(resolve => setTimeout(resolve, gapTimeMs));
+            }
+
+            try {
+                const chat = await userClient.getChatById(groupId);
+                if (!chat) {
+                    errors.push({ groupId, error: 'Group not found' });
+                    continue;
+                }
+
+                let sentMessage;
+
+                // Handle different message types
+                if (messageType === 'poll' && pollOptions) {
+                    if (!pollOptions || pollOptions.length < 2) {
+                        errors.push({ groupId, error: 'Poll must have at least 2 options' });
+                        continue;
+                    }
+
+                    const poll = new Poll(message, pollOptions, { allowMultipleAnswers });
+                    sentMessage = await chat.sendMessage(poll);
+                } else if (file) {
+                    const media = new MessageMedia(
+                        file.mimetype,
+                        file.buffer.toString('base64'),
+                        file.originalname
+                    );
+
+                    sentMessage = await chat.sendMessage(media, {
+                        caption: message || ''
+                    });
+                } else if (message && message.trim()) {
+                    sentMessage = await chat.sendMessage(message);
+                } else {
+                    errors.push({ groupId, error: 'Message content or file is required' });
+                    continue;
+                }
+
+                results.push({
+                    groupId,
+                    messageId: sentMessage.id._serialized,
+                    success: true
+                });
+
+                console.log(`✅ Scheduled broadcast sent to group ${groupId}`);
+            } catch (error) {
+                console.error(`❌ Error sending scheduled broadcast to group ${groupId}:`, error);
+                errors.push({ groupId, error: error.message });
+            }
+        }
+
+        // Update broadcast status and result
+        const resultSummary = JSON.stringify({
+            totalSent: results.length,
+            totalFailed: errors.length,
+            results,
+            errors
+        });
+
+        db.run(`
+            UPDATE scheduled_broadcasts
+            SET status = ?, executed_at = ?, result_summary = ?
+            WHERE id = ?
+        `, ['sent', new Date().toISOString(), resultSummary, broadcast.id], (err) => {
+            if (err) {
+                console.error('Error updating broadcast status:', err);
+            } else {
+                console.log(`✅ Scheduled broadcast ${broadcast.id} completed: ${results.length} sent, ${errors.length} failed`);
+            }
+        });
+
+    } catch (error) {
+        console.error(`❌ Error executing scheduled broadcast ${broadcast.id}:`, error);
+
+        // Mark as failed
+        const resultSummary = JSON.stringify({
+            error: error.message,
+            totalSent: 0,
+            totalFailed: 0
+        });
+
+        db.run(`
+            UPDATE scheduled_broadcasts
+            SET status = ?, executed_at = ?, result_summary = ?
+            WHERE id = ?
+        `, ['failed', new Date().toISOString(), resultSummary, broadcast.id]);
+    }
+}
+
+// Check for scheduled broadcasts every minute
+schedule.scheduleJob('* * * * *', async () => {
+    const now = new Date().toISOString();
+
+    db.all(`
+        SELECT *
+        FROM scheduled_broadcasts
+        WHERE status = 'pending' AND scheduled_time <= ?
+        ORDER BY scheduled_time ASC
+    `, [now], async (err, broadcasts) => {
+        if (err) {
+            console.error('Error fetching scheduled broadcasts:', err);
+            return;
+        }
+
+        if (broadcasts && broadcasts.length > 0) {
+            console.log(`📅 Found ${broadcasts.length} scheduled broadcast(s) to execute`);
+
+            // Execute each broadcast
+            for (const broadcast of broadcasts) {
+                // Mark as executing to prevent duplicate execution
+                db.run(`
+                    UPDATE scheduled_broadcasts
+                    SET status = 'executing'
+                    WHERE id = ?
+                `, [broadcast.id]);
+
+                // Execute in background (don't await to allow parallel execution)
+                executeScheduledBroadcast(broadcast).catch(err => {
+                    console.error(`Error in scheduled broadcast ${broadcast.id}:`, err);
+                });
+            }
+        }
+    });
+});
+
+console.log('⏰ Scheduled broadcast checker initialized (runs every minute)');
 
 // ============================================
 // START SERVER

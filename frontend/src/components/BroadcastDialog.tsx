@@ -53,6 +53,9 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
   const [allGroups, setAllGroups] = useState<WhatsAppGroup[]>([]);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [broadcastProgress, setBroadcastProgress] = useState<{ current: number; total: number } | null>(null);
+  const [broadcastMode, setBroadcastMode] = useState<'now' | 'schedule'>('now');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -153,65 +156,119 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
       return;
     }
 
+    // Validate scheduling
+    if (broadcastMode === 'schedule') {
+      if (!scheduledDate || !scheduledTime) {
+        toast.error('Please select both date and time for scheduled broadcast');
+        return;
+      }
+
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+      const now = new Date();
+
+      if (scheduledDateTime <= now) {
+        toast.error('Scheduled time must be in the future');
+        return;
+      }
+    }
+
     setIsSending(true);
     const totalGroups = selectedGroups.size;
-
-    // Start at 1 since first message sends immediately
-    setBroadcastProgress({ current: 1, total: totalGroups });
-
-    // Simulate progress based on gap time
-    let currentProgress = 1;
-    const progressInterval = setInterval(() => {
-      currentProgress++;
-      if (currentProgress <= totalGroups) {
-        setBroadcastProgress({ current: currentProgress, total: totalGroups });
-      }
-    }, gapTime * 1000);
+    const messageContent = messageType === 'poll' ? pollQuestion : message;
+    const pollOpts = messageType === 'poll' ? pollOptions.filter(opt => opt.trim() !== '') : undefined;
 
     try {
-      const messageContent = messageType === 'poll' ? pollQuestion : message;
-      const pollOpts = messageType === 'poll' ? pollOptions.filter(opt => opt.trim() !== '') : undefined;
+      let result;
 
-      const result = await api.broadcastMessage(
-        Array.from(selectedGroups),
-        messageContent,
-        selectedFile || undefined,
-        messageType,
-        pollOpts,
-        gapTime,
-        allowMultipleAnswers
-      );
+      if (broadcastMode === 'schedule') {
+        // Schedule the broadcast
+        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
 
-      clearInterval(progressInterval);
-      // Ensure we show completion
-      setBroadcastProgress({ current: totalGroups, total: totalGroups });
+        result = await api.schedulebroadcast(
+          Array.from(selectedGroups),
+          messageContent,
+          scheduledDateTime.toISOString(),
+          selectedFile || undefined,
+          messageType,
+          pollOpts,
+          gapTime,
+          allowMultipleAnswers
+        );
 
-      if (result.success) {
-        toast.success(result.message || `Broadcast sent to ${result.totalSent} group(s)`);
-        if (result.totalFailed > 0) {
-          toast.warning(`${result.totalFailed} group(s) failed`);
+        if (result.success) {
+          toast.success(result.message || `Broadcast scheduled successfully`);
+
+          // Reset form
+          setMessage('');
+          setPollQuestion('');
+          setPollOptions(['', '']);
+          setAllowMultipleAnswers(false);
+          setMessageType('text');
+          handleRemoveFile();
+          setSelectedGroups(new Set());
+          setGapTime(10);
+          setBroadcastMode('now');
+          setScheduledDate('');
+          setScheduledTime('');
+          onOpenChange(false);
+          onBroadcastSent?.();
+        } else {
+          toast.error(result.error || 'Failed to schedule broadcast');
         }
-
-        // Reset form
-        setMessage('');
-        setPollQuestion('');
-        setPollOptions(['', '']);
-        setAllowMultipleAnswers(false);
-        setMessageType('text');
-        handleRemoveFile();
-        setSelectedGroups(new Set());
-        setGapTime(10);
-        setBroadcastProgress(null);
-        onOpenChange(false);
-        onBroadcastSent?.();
       } else {
-        toast.error(result.error || 'Failed to broadcast message');
-        setBroadcastProgress(null);
+        // Send immediately
+        // Start at 1 since first message sends immediately
+        setBroadcastProgress({ current: 1, total: totalGroups });
+
+        // Simulate progress based on gap time
+        let currentProgress = 1;
+        const progressInterval = setInterval(() => {
+          currentProgress++;
+          if (currentProgress <= totalGroups) {
+            setBroadcastProgress({ current: currentProgress, total: totalGroups });
+          }
+        }, gapTime * 1000);
+
+        result = await api.broadcastMessage(
+          Array.from(selectedGroups),
+          messageContent,
+          selectedFile || undefined,
+          messageType,
+          pollOpts,
+          gapTime,
+          allowMultipleAnswers
+        );
+
+        clearInterval(progressInterval);
+        // Ensure we show completion
+        setBroadcastProgress({ current: totalGroups, total: totalGroups });
+
+        if (result.success) {
+          toast.success(result.message || `Broadcast sent to ${result.totalSent} group(s)`);
+          if (result.totalFailed > 0) {
+            toast.warning(`${result.totalFailed} group(s) failed`);
+          }
+
+          // Reset form
+          setMessage('');
+          setPollQuestion('');
+          setPollOptions(['', '']);
+          setAllowMultipleAnswers(false);
+          setMessageType('text');
+          handleRemoveFile();
+          setSelectedGroups(new Set());
+          setGapTime(10);
+          setBroadcastProgress(null);
+          onOpenChange(false);
+          onBroadcastSent?.();
+        } else {
+          toast.error(result.error || 'Failed to broadcast message');
+          setBroadcastProgress(null);
+        }
       }
     } catch (error) {
       console.error('Error broadcasting:', error);
       toast.error('Failed to broadcast message');
-      clearInterval(progressInterval);
       setBroadcastProgress(null);
     } finally {
       setIsSending(false);
@@ -329,6 +386,59 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
               Total estimated time: ~{Math.ceil((selectedGroups.size * gapTime) / 60)} minute(s)
             </p>
           </div>
+
+          {/* Broadcast Mode Selector */}
+          <div>
+            <Label>Broadcast Mode</Label>
+            <div className="flex gap-2 mt-1">
+              <Button
+                variant={broadcastMode === 'now' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setBroadcastMode('now')}
+              >
+                Send Now
+              </Button>
+              <Button
+                variant={broadcastMode === 'schedule' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setBroadcastMode('schedule')}
+              >
+                Schedule
+              </Button>
+            </div>
+          </div>
+
+          {/* Scheduling Date/Time */}
+          {broadcastMode === 'schedule' && (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="scheduledDate">Scheduled Date</Label>
+                <Input
+                  id="scheduledDate"
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  className="mt-1"
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+              <div>
+                <Label htmlFor="scheduledTime">Scheduled Time</Label>
+                <Input
+                  id="scheduledTime"
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              {scheduledDate && scheduledTime && (
+                <p className="text-sm text-blue-600 dark:text-blue-400">
+                  Broadcast will be sent on {new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString()}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Message Type Selector */}
           <div>
@@ -515,7 +625,9 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
             {broadcastProgress
               ? `Broadcasting... (${broadcastProgress.current}/${broadcastProgress.total})`
               : isSending
-              ? 'Starting...'
+              ? broadcastMode === 'schedule' ? 'Scheduling...' : 'Starting...'
+              : broadcastMode === 'schedule'
+              ? `Schedule for ${selectedGroups.size} Group(s)`
               : `Broadcast to ${selectedGroups.size} Group(s)`
             }
           </Button>

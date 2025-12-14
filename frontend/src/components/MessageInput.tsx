@@ -13,7 +13,8 @@ import {
   X,
   Plus,
   Trash2,
-  Radio
+  Radio,
+  Calendar
 } from 'lucide-react';
 import {
   Dialog,
@@ -26,6 +27,7 @@ import {
 import { toast } from 'sonner';
 import { api } from '../lib/api';
 import { BroadcastDialog } from './BroadcastDialog';
+import { ScheduledBroadcastsDialog } from './ScheduledBroadcastsDialog';
 
 interface MessageInputProps {
   groupId: string;
@@ -39,6 +41,7 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
   const [isSending, setIsSending] = useState(false);
   const [showPollDialog, setShowPollDialog] = useState(false);
   const [showBroadcastDialog, setShowBroadcastDialog] = useState(false);
+  const [showScheduledBroadcastsDialog, setShowScheduledBroadcastsDialog] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [allowMultipleAnswers, setAllowMultipleAnswers] = useState(false);
@@ -263,6 +266,17 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
             <Radio className="h-5 w-5" />
           </Button>
 
+          {/* Scheduled Broadcasts Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isSending}
+            title="View scheduled broadcasts"
+            onClick={() => setShowScheduledBroadcastsDialog(true)}
+          >
+            <Calendar className="h-5 w-5" />
+          </Button>
+
           {/* Poll Dialog */}
           <Dialog open={showPollDialog} onOpenChange={setShowPollDialog}>
             <DialogTrigger asChild>
@@ -376,6 +390,12 @@ export function MessageInput({ groupId, onMessageSent }: MessageInputProps) {
         open={showBroadcastDialog}
         onOpenChange={setShowBroadcastDialog}
         onBroadcastSent={onMessageSent}
+      />
+
+      {/* Scheduled Broadcasts Dialog */}
+      <ScheduledBroadcastsDialog
+        open={showScheduledBroadcastsDialog}
+        onOpenChange={setShowScheduledBroadcastsDialog}
       />
     </div>
   );
