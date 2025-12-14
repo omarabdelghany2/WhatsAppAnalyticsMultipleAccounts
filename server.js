@@ -1113,6 +1113,8 @@ app.get('/api/admin/view-user/:userId/scheduled-broadcasts', authenticateToken, 
     const viewUserId = parseInt(req.params.userId);
     const status = req.query.status || 'all'; // 'pending', 'sent', 'failed', 'all'
 
+    console.log(`📅 Admin ${req.user.userId} requesting scheduled broadcasts for user ${viewUserId}, status: ${status}`);
+
     let query = `
         SELECT id, group_ids, message, message_type, poll_options,
                allow_multiple_answers, gap_time, scheduled_time, status,
@@ -1131,14 +1133,20 @@ app.get('/api/admin/view-user/:userId/scheduled-broadcasts', authenticateToken, 
 
     query += ' ORDER BY scheduled_time DESC';
 
+    console.log('Query:', query);
+    console.log('Params:', params);
+
     db.all(query, params, (err, rows) => {
         if (err) {
-            console.error('Error fetching scheduled broadcasts for user:', err);
+            console.error('❌ Error fetching scheduled broadcasts for user:', err);
             return res.status(500).json({
                 success: false,
                 error: 'Failed to fetch scheduled broadcasts'
             });
         }
+
+        console.log(`📊 Raw rows from database: ${rows.length} rows`);
+        console.log('Raw rows:', JSON.stringify(rows, null, 2));
 
         // Parse JSON fields
         const broadcasts = rows.map(row => ({
@@ -1149,7 +1157,7 @@ app.get('/api/admin/view-user/:userId/scheduled-broadcasts', authenticateToken, 
             has_file: row.has_file === 1
         }));
 
-        console.log(`Admin view scheduled broadcasts for user ${viewUserId}: found ${broadcasts.length} broadcasts`);
+        console.log(`✅ Admin view scheduled broadcasts for user ${viewUserId}: found ${broadcasts.length} broadcasts`);
 
         res.json({
             success: true,

@@ -66,16 +66,22 @@ export function ScheduledBroadcastsDialog({ open, onOpenChange, adminViewUserId 
       let result;
       if (adminViewUserId) {
         // Admin viewing another user's scheduled broadcasts
+        console.log('Admin viewing user scheduled broadcasts:', adminViewUserId, 'status:', filterStatus);
         result = await api.viewUserScheduledBroadcasts(adminViewUserId, filterStatus);
+        console.log('Admin API result:', result);
       } else {
         // User viewing their own scheduled broadcasts
+        console.log('User viewing own scheduled broadcasts, status:', filterStatus);
         result = await api.getScheduledBroadcasts(filterStatus);
+        console.log('User API result:', result);
       }
 
       if (result.success) {
+        console.log('Setting broadcasts:', result.broadcasts.length, 'broadcasts');
         setBroadcasts(result.broadcasts);
       } else {
-        toast.error('Failed to load scheduled broadcasts');
+        console.error('API returned error:', result.error);
+        toast.error('Failed to load scheduled broadcasts: ' + (result.error || 'Unknown error'));
       }
     } catch (error) {
       console.error('Error loading scheduled broadcasts:', error);
