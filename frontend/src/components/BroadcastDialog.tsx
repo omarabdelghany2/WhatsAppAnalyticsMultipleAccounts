@@ -75,12 +75,19 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
       const result = await api.getAllChats();
       if (result.success) {
         setAllGroups(result.groups);
+        if (result.groups.length === 0) {
+          toast.warning('No WhatsApp groups found. Make sure you have groups in your WhatsApp.');
+        }
       } else {
-        toast.error('Failed to load groups');
+        if (result.error === 'WhatsApp client not ready') {
+          toast.error('WhatsApp not connected. Please connect your WhatsApp first from the main page.');
+        } else {
+          toast.error(result.error || 'Failed to load groups');
+        }
       }
     } catch (error) {
       console.error('Error loading groups:', error);
-      toast.error('Failed to load groups');
+      toast.error('Failed to load groups. Please make sure WhatsApp is connected.');
     } finally {
       setIsLoadingGroups(false);
     }
@@ -348,7 +355,12 @@ export function BroadcastDialog({ open, onOpenChange, onBroadcastSent }: Broadca
               {isLoadingGroups ? (
                 <p className="text-sm text-gray-500 text-center py-4">Loading groups...</p>
               ) : allGroups.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-4">No groups found</p>
+                <div className="text-center py-4 space-y-2">
+                  <p className="text-sm text-gray-500">No WhatsApp groups found</p>
+                  <p className="text-xs text-gray-400">
+                    Please make sure WhatsApp is connected and you have groups in your WhatsApp account
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {allGroups.map((group) => (
