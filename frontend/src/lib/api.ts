@@ -366,6 +366,16 @@ export const api = {
     });
     return response.json();
   },
+
+  async viewUserScheduledBroadcasts(userId: number, status?: 'pending' | 'sent' | 'failed' | 'all') {
+    const url = status && status !== 'all'
+      ? `${API_BASE_URL}/api/admin/view-user/${userId}/scheduled-broadcasts?status=${status}`
+      : `${API_BASE_URL}/api/admin/view-user/${userId}/scheduled-broadcasts`;
+    const response = await fetch(url, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
 };
 
 export class WSClient {

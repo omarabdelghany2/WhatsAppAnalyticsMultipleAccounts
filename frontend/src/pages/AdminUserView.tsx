@@ -6,10 +6,11 @@ import { GroupList } from "@/components/GroupList";
 import { ChatView } from "@/components/ChatView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Eye } from "lucide-react";
+import { ArrowLeft, Eye, Calendar } from "lucide-react";
 import { api, Message, Event } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
+import { ScheduledBroadcastsDialog } from "@/components/ScheduledBroadcastsDialog";
 
 const AdminUserView = () => {
   const { userId } = useParams<{ userId: string }>();
@@ -20,6 +21,7 @@ const AdminUserView = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [viewingUser, setViewingUser] = useState<{username: string, email: string} | null>(null);
+  const [showScheduledBroadcasts, setShowScheduledBroadcasts] = useState(false);
 
   const viewUserIdNum = userId ? parseInt(userId) : 0;
 
@@ -176,6 +178,14 @@ const AdminUserView = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowScheduledBroadcasts(true)}
+          >
+            <Calendar className="h-4 w-4 mr-2" />
+            Scheduled Broadcasts
+          </Button>
           <ThemeToggle />
         </div>
       </header>
@@ -226,6 +236,13 @@ const AdminUserView = () => {
           />
         </div>
       </div>
+
+      {/* Scheduled Broadcasts Dialog */}
+      <ScheduledBroadcastsDialog
+        open={showScheduledBroadcasts}
+        onOpenChange={setShowScheduledBroadcasts}
+        adminViewUserId={viewUserIdNum}
+      />
     </div>
   );
 };

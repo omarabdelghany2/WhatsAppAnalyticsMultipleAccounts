@@ -1108,6 +1108,56 @@ app.get('/api/admin/view-user/:userId/groups/:groupId/members', authenticateToke
     }
 });
 
+// Get scheduled broadcasts for a specific user (admin only)
+app.get('/api/admin/view-user/:userId/scheduled-broadcasts', authenticateToken, authenticateAdmin, (req, res) => {
+    const viewUserId = parseInt(req.params.userId);
+    const status = req.query.status || 'all'; // 'pending', 'sent', 'failed', 'all'
+
+    let query = `
+        SELECT id, group_ids, message, message_type, poll_options,
+               allow_multiple_answers, gap_time, scheduled_time, status,
+               created_at, executed_at, result_summary,
+               (file_data IS NOT NULL) as has_file, file_name
+        FROM scheduled_broadcasts
+        WHERE user_id = ?
+    `;
+
+    const params = [viewUserId];
+
+    if (status !== 'all') {
+        query += ' AND status = ?';
+        params.push(status);
+    }
+
+    query += ' ORDER BY scheduled_time DESC';
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            console.error('Error fetching scheduled broadcasts for user:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to fetch scheduled broadcasts'
+            });
+        }
+
+        // Parse JSON fields
+        const broadcasts = rows.map(row => ({
+            ...row,
+            group_ids: JSON.parse(row.group_ids),
+            poll_options: row.poll_options ? JSON.parse(row.poll_options) : null,
+            allow_multiple_answers: row.allow_multiple_answers === 1,
+            has_file: row.has_file === 1
+        }));
+
+        console.log(`Admin view scheduled broadcasts for user ${viewUserId}: found ${broadcasts.length} broadcasts`);
+
+        res.json({
+            success: true,
+            broadcasts
+        });
+    });
+});
+
 // ============================================
 // PER-USER WHATSAPP ENDPOINTS (Multi-tenant)
 // ============================================

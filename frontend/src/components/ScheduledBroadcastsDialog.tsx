@@ -26,6 +26,7 @@ import { ScrollArea } from './ui/scroll-area';
 interface ScheduledBroadcastsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  adminViewUserId?: number;
 }
 
 interface ScheduledBroadcast {
@@ -45,7 +46,7 @@ interface ScheduledBroadcast {
   file_name: string | null;
 }
 
-export function ScheduledBroadcastsDialog({ open, onOpenChange }: ScheduledBroadcastsDialogProps) {
+export function ScheduledBroadcastsDialog({ open, onOpenChange, adminViewUserId }: ScheduledBroadcastsDialogProps) {
   const [broadcasts, setBroadcasts] = useState<ScheduledBroadcast[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'sent' | 'failed'>('all');
@@ -57,12 +58,20 @@ export function ScheduledBroadcastsDialog({ open, onOpenChange }: ScheduledBroad
     if (open) {
       loadScheduledBroadcasts();
     }
-  }, [open, filterStatus]);
+  }, [open, filterStatus, adminViewUserId]);
 
   const loadScheduledBroadcasts = async () => {
     setIsLoading(true);
     try {
-      const result = await api.getScheduledBroadcasts(filterStatus);
+      let result;
+      if (adminViewUserId) {
+        // Admin viewing another user's scheduled broadcasts
+        result = await api.viewUserScheduledBroadcasts(adminViewUserId, filterStatus);
+      } else {
+        // User viewing their own scheduled broadcasts
+        result = await api.getScheduledBroadcasts(filterStatus);
+      }
+
       if (result.success) {
         setBroadcasts(result.broadcasts);
       } else {
@@ -162,9 +171,12 @@ export function ScheduledBroadcastsDialog({ open, onOpenChange }: ScheduledBroad
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Scheduled Broadcasts</DialogTitle>
+          <DialogTitle>Scheduled Broadcasts{adminViewUserId && ' (Admin View)'}</DialogTitle>
           <DialogDescription>
-            View and manage your scheduled broadcasts
+            {adminViewUserId
+              ? 'View scheduled broadcasts for this user (read-only)'
+              : 'View and manage your scheduled broadcasts'
+            }
           </DialogDescription>
         </DialogHeader>
 
@@ -273,7 +285,9 @@ export function ScheduledBroadcastsDialog({ open, onOpenChange }: ScheduledBroad
                       <Badge variant="secondary">{broadcast.message_type}</Badge>
                     </TableCell>
                     <TableCell>
-                      {editingId === broadcast.id ? (
+                      {adminViewUserId ? (
+                        <span className="text-xs text-gray-400">Read-only</span>
+                      ) : editingId === broadcast.id ? (
                         <div className="flex gap-1">
                           <Button
                             size="sm"
