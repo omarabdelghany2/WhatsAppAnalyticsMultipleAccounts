@@ -110,17 +110,9 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
     setLoadingMembers(true);
     try {
       const response = await api.getGroupMembers(groupId);
+      console.log('👥 Loaded group members:', response.members?.length);
       if (response.success) {
         setGroupMembers(response.members);
-
-        // Update specific mention names based on loaded members
-        if (specificMentions.length > 0) {
-          const names = specificMentions.map(mentionId => {
-            const member = response.members.find((m: any) => m.id === mentionId);
-            return member ? member.name : mentionId;
-          });
-          setSpecificMentionNames(names);
-        }
       }
     } catch (error) {
       console.error('Error fetching group members:', error);
@@ -128,6 +120,18 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
       setLoadingMembers(false);
     }
   };
+
+  // Separate useEffect to update names when both members and mentions are loaded
+  useEffect(() => {
+    if (groupMembers.length > 0 && specificMentions.length > 0) {
+      const names = specificMentions.map(mentionId => {
+        const member = groupMembers.find(m => m.id === mentionId);
+        return member ? member.name : mentionId;
+      });
+      setSpecificMentionNames(names);
+      console.log('✅ Updated specific mention names:', names);
+    }
+  }, [groupMembers, specificMentions]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -178,6 +182,9 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
       toast.error(translateMode ? '延迟时间不能为负数' : 'Delay time cannot be negative');
       return;
     }
+
+    console.log('🔍 Saving welcome settings with specificMentions:', specificMentions);
+    console.log('🔍 Specific mention names:', specificMentionNames);
 
     setSaving(true);
     try {
@@ -543,8 +550,17 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                 {translateMode ? '选择要在欢迎消息中始终提及的成员' : 'Choose members to always mention in welcome messages'}
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2">
-              {groupMembers.map((member) => (
+            {loadingMembers ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+              </div>
+            ) : groupMembers.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                {translateMode ? '未找到群组成员' : 'No group members found'}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {groupMembers.map((member) => (
                 <div
                   key={member.id}
                   className="flex items-center space-x-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
@@ -554,14 +570,20 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                     checked={specificMentions.includes(member.id)}
                     onCheckedChange={(checked) => {
                       if (checked) {
-                        setSpecificMentions([...specificMentions, member.id]);
-                        setSpecificMentionNames([...specificMentionNames, member.name]);
+                        const newMentions = [...specificMentions, member.id];
+                        const newNames = [...specificMentionNames, member.name];
+                        console.log(`✅ Added member ${member.name} (${member.id})`);
+                        console.log('New mentions:', newMentions);
+                        setSpecificMentions(newMentions);
+                        setSpecificMentionNames(newNames);
                       } else {
                         const index = specificMentions.indexOf(member.id);
                         const newMentions = [...specificMentions];
                         const newNames = [...specificMentionNames];
                         newMentions.splice(index, 1);
                         newNames.splice(index, 1);
+                        console.log(`❌ Removed member ${member.name} (${member.id})`);
+                        console.log('New mentions:', newMentions);
                         setSpecificMentions(newMentions);
                         setSpecificMentionNames(newNames);
                       }
@@ -580,7 +602,8 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                   </label>
                 </div>
               ))}
-            </div>
+              </div>
+            )}
             <DialogFooter>
               <Button
                 variant="outline"

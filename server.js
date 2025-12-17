@@ -890,6 +890,8 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, upload.single('ima
     const { enabled, messageText, memberThreshold, delayMinutes, imageEnabled, imageCaption, specificMentions } = req.body;
 
     console.log(`💾 Saving welcome settings: user=${userId}, group=${groupId}, enabled=${enabled}, threshold=${memberThreshold}, delay=${delayMinutes}, imageEnabled=${imageEnabled}`);
+    console.log(`🔍 Received specificMentions from frontend:`, specificMentions);
+    console.log(`🔍 Type of specificMentions:`, typeof specificMentions);
 
     // Validation
     if (typeof enabled !== 'boolean' && enabled !== 'true' && enabled !== 'false') {

@@ -423,6 +423,9 @@ export const api = {
     imageCaption: string,
     specificMentions: string[]
   ) {
+    console.log('📤 API client sending specificMentions:', specificMentions);
+    console.log('📤 JSON stringified:', JSON.stringify(specificMentions));
+
     const formData = new FormData();
     formData.append('enabled', enabled.toString());
     formData.append('messageText', messageText);
