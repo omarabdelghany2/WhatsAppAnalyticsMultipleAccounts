@@ -264,6 +264,23 @@ function initializeDatabase() {
             )
         `);
 
+        // Create welcome_message_settings table
+        db.run(`
+            CREATE TABLE IF NOT EXISTS welcome_message_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                group_id TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT 0,
+                message_text TEXT NOT NULL,
+                member_threshold INTEGER DEFAULT 5,
+                delay_minutes INTEGER DEFAULT 5,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, group_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
         // Add mentions column to scheduled_broadcasts table if it doesn't exist
         db.run(`
             ALTER TABLE scheduled_broadcasts ADD COLUMN mentions TEXT
@@ -398,6 +415,8 @@ function initializeDatabase() {
         db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_user_id ON scheduled_broadcasts(user_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_scheduled_time ON scheduled_broadcasts(scheduled_time)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_status ON scheduled_broadcasts(status)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_welcome_settings_user_id ON welcome_message_settings(user_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_welcome_settings_group_id ON welcome_message_settings(group_id)`);
 
         console.log('✅ Database tables initialized');
     });
@@ -408,6 +427,9 @@ const groupInfoStore = new Map(); // groupId -> { name, id, memberCount }
 
 // In-memory cache for group members: groupId -> Map(memberId -> {name, phone, isAdmin})
 const groupMembersCache = new Map();
+
+// Welcome message tracking: Map(userId_groupId -> {newMembers: [], timeoutId: number})
+const pendingWelcomeMessages = new Map();
 
 // WebSocket clients
 const wsClients = new Set();
@@ -793,6 +815,126 @@ app.delete('/api/admin/users/:userId', authenticateToken, authenticateAdmin, (re
         res.json({
             success: true,
             message: 'User deleted successfully'
+        });
+    });
+});
+
+// ============================================
+// WELCOME MESSAGE SETTINGS ENDPOINTS
+// ============================================
+
+// Get welcome message settings for a group
+app.get('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+
+    db.get(`
+        SELECT * FROM welcome_message_settings
+        WHERE user_id = ? AND group_id = ?
+    `, [userId, groupId], (err, row) => {
+        if (err) {
+            console.error('Error fetching welcome settings:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        res.json({
+            success: true,
+            settings: row || null
+        });
+    });
+});
+
+// Save or update welcome message settings for a group
+app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+    const { enabled, messageText, memberThreshold, delayMinutes } = req.body;
+
+    // Validation
+    if (typeof enabled !== 'boolean') {
+        return res.status(400).json({
+            success: false,
+            error: 'enabled must be a boolean'
+        });
+    }
+
+    if (!messageText || typeof messageText !== 'string') {
+        return res.status(400).json({
+            success: false,
+            error: 'messageText is required'
+        });
+    }
+
+    if (!memberThreshold || memberThreshold < 1) {
+        return res.status(400).json({
+            success: false,
+            error: 'memberThreshold must be at least 1'
+        });
+    }
+
+    if (!delayMinutes || delayMinutes < 0) {
+        return res.status(400).json({
+            success: false,
+            error: 'delayMinutes must be at least 0'
+        });
+    }
+
+    // Insert or update
+    db.run(`
+        INSERT INTO welcome_message_settings (user_id, group_id, enabled, message_text, member_threshold, delay_minutes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, group_id) DO UPDATE SET
+            enabled = excluded.enabled,
+            message_text = excluded.message_text,
+            member_threshold = excluded.member_threshold,
+            delay_minutes = excluded.delay_minutes,
+            updated_at = CURRENT_TIMESTAMP
+    `, [userId, groupId, enabled ? 1 : 0, messageText, memberThreshold, delayMinutes], function(err) {
+        if (err) {
+            console.error('Error saving welcome settings:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Welcome message settings saved successfully'
+        });
+    });
+});
+
+// Delete welcome message settings for a group
+app.delete('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+
+    db.run(`
+        DELETE FROM welcome_message_settings
+        WHERE user_id = ? AND group_id = ?
+    `, [userId, groupId], function(err) {
+        if (err) {
+            console.error('Error deleting welcome settings:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Settings not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Welcome message settings deleted successfully'
         });
     });
 });
@@ -3304,13 +3446,24 @@ async function initClientForUser(userId) {
         const groupInfo = userGroups ? userGroups.get(groupId) : null;
 
         if (groupInfo) {
+            const newMembers = [];
             for (const participant of notification.recipientIds) {
                 // Correct parameter order: (userId, userClient, memberId, eventType, groupName, groupId)
                 const event = await createEventForUser(userId, userClient, participant._serialized, 'JOIN', groupInfo.name, groupId);
                 if (event) {
                     console.log(`🟢 User ${userId}: ${event.memberName} joined ${groupInfo.name}`);
                     broadcast({ type: 'event', userId: userId, event: event });
+                    newMembers.push({
+                        id: participant._serialized,
+                        name: event.memberName,
+                        phone: event.memberId
+                    });
                 }
+            }
+
+            // Check and trigger welcome message if configured
+            if (newMembers.length > 0) {
+                await checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupInfo.name, newMembers);
             }
         }
     });
@@ -3890,6 +4043,104 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
     } catch (error) {
         console.error(`❌ Error processing message for user ${userId}:`, error.message);
         return null;
+    }
+}
+
+// Check and trigger welcome message for new members
+async function checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupName, newMembers) {
+    try {
+        // Get welcome message settings for this group
+        const settings = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT * FROM welcome_message_settings
+                WHERE user_id = ? AND group_id = ? AND enabled = 1
+            `, [userId, groupId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!settings) {
+            // No welcome message configured or disabled
+            return;
+        }
+
+        const key = `${userId}_${groupId}`;
+        let pending = pendingWelcomeMessages.get(key);
+
+        if (!pending) {
+            // Initialize pending welcome message tracking
+            pending = {
+                newMembers: [],
+                timeoutId: null
+            };
+            pendingWelcomeMessages.set(key, pending);
+        }
+
+        // Add new members to the list
+        pending.newMembers.push(...newMembers);
+
+        // Clear existing timeout if any
+        if (pending.timeoutId) {
+            clearTimeout(pending.timeoutId);
+        }
+
+        // Check if we've reached the threshold
+        if (pending.newMembers.length >= settings.member_threshold) {
+            // Set timeout to send message after delay
+            const delayMs = settings.delay_minutes * 60 * 1000;
+            pending.timeoutId = setTimeout(async () => {
+                await sendWelcomeMessage(userId, userClient, groupId, groupName, settings, pending.newMembers);
+                // Clear the pending list
+                pendingWelcomeMessages.delete(key);
+            }, delayMs);
+
+            console.log(`⏰ Welcome message scheduled for ${groupName} in ${settings.delay_minutes} minutes for ${pending.newMembers.length} members`);
+        }
+    } catch (error) {
+        console.error('Error checking welcome message trigger:', error);
+    }
+}
+
+// Send welcome message with mentions
+async function sendWelcomeMessage(userId, userClient, groupId, groupName, settings, members) {
+    try {
+        console.log(`👋 Sending welcome message to ${groupName} for ${members.length} new members`);
+
+        // Get the chat
+        const chat = await userClient.getChatById(groupId);
+        if (!chat) {
+            console.error('Chat not found for welcome message');
+            return;
+        }
+
+        // Build mentions array as Contact objects
+        const mentionContacts = [];
+        for (const member of members) {
+            try {
+                const contact = await userClient.getContactById(member.id);
+                if (contact) {
+                    mentionContacts.push(contact);
+                }
+            } catch (err) {
+                console.error(`Error getting contact for welcome mention ${member.id}:`, err);
+            }
+        }
+
+        // Build message with phone number mentions
+        const mentionText = members.map(m => `@${m.phone}`).join(' ');
+        const fullMessage = `${settings.message_text}\n\n${mentionText}`;
+
+        // Send message with mentions
+        const messageOptions = {};
+        if (mentionContacts.length > 0) {
+            messageOptions.mentions = mentionContacts;
+        }
+
+        await chat.sendMessage(fullMessage, messageOptions);
+        console.log(`✅ Welcome message sent to ${groupName}`);
+    } catch (error) {
+        console.error('Error sending welcome message:', error);
     }
 }
 

@@ -403,6 +403,31 @@ export const api = {
     });
     return response.json();
   },
+
+  // Welcome message settings
+  async getWelcomeSettings(groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/welcome-settings/${groupId}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async saveWelcomeSettings(groupId: string, enabled: boolean, messageText: string, memberThreshold: number, delayMinutes: number) {
+    const response = await fetch(`${API_BASE_URL}/api/welcome-settings/${groupId}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ enabled, messageText, memberThreshold, delayMinutes }),
+    });
+    return response.json();
+  },
+
+  async deleteWelcomeSettings(groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/welcome-settings/${groupId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
 };
 
 export class WSClient {

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Users, Plus, X } from "lucide-react";
+import { Users, Plus, X, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { WelcomeMessageSettings } from "./WelcomeMessageSettings";
 
 interface Group {
   id: string;
@@ -24,6 +25,8 @@ interface GroupListProps {
 
 export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, onDeleteGroup, translateMode }: GroupListProps) {
   const [newGroupName, setNewGroupName] = useState("");
+  const [settingsGroupId, setSettingsGroupId] = useState<string | null>(null);
+  const [settingsGroupName, setSettingsGroupName] = useState<string>("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +34,11 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
       onAddGroup(newGroupName.trim());
       setNewGroupName("");
     }
+  };
+
+  const handleOpenSettings = (groupId: string, groupName: string) => {
+    setSettingsGroupId(groupId);
+    setSettingsGroupName(groupName);
   };
 
   return (
@@ -84,20 +92,50 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
                 )}
               </div>
             </button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 top-2 opacity-0 group-hover/item:opacity-100 transition-opacity h-8 w-8"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteGroup(group.id);
-              }}
-            >
-              <X className="h-4 w-4 text-destructive" />
-            </Button>
+            <div className="absolute right-2 top-2 flex gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenSettings(group.id, group.name);
+                }}
+                title="Welcome message settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteGroup(group.id);
+                }}
+                title="Remove group"
+              >
+                <X className="h-4 w-4 text-destructive" />
+              </Button>
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Welcome Message Settings Dialog */}
+      {settingsGroupId && (
+        <WelcomeMessageSettings
+          open={settingsGroupId !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSettingsGroupId(null);
+              setSettingsGroupName("");
+            }
+          }}
+          groupId={settingsGroupId}
+          groupName={settingsGroupName}
+        />
+      )}
     </div>
   );
 }
