@@ -15,7 +15,8 @@ import {
   Trash2,
   Radio,
   Calendar,
-  Reply
+  Reply,
+  AtSign
 } from 'lucide-react';
 import {
   Dialog,
@@ -29,6 +30,7 @@ import { toast } from 'sonner';
 import { api } from '../lib/api';
 import { BroadcastDialog } from './BroadcastDialog';
 import { ScheduledBroadcastsDialog } from './ScheduledBroadcastsDialog';
+import { MentionSelector } from './MentionSelector';
 
 interface ReplyingToMessage {
   id: string;
@@ -51,9 +53,12 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
   const [showPollDialog, setShowPollDialog] = useState(false);
   const [showBroadcastDialog, setShowBroadcastDialog] = useState(false);
   const [showScheduledBroadcastsDialog, setShowScheduledBroadcastsDialog] = useState(false);
+  const [showMentionSelector, setShowMentionSelector] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [allowMultipleAnswers, setAllowMultipleAnswers] = useState(false);
+  const [selectedMentions, setSelectedMentions] = useState<string[]>([]);
+  const [mentionedNames, setMentionedNames] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +88,19 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
     if (documentInputRef.current) documentInputRef.current.value = '';
   };
 
+  const handleMentionsSelected = (mentionIds: string[], memberNames: string[]) => {
+    setSelectedMentions(mentionIds);
+    setMentionedNames(memberNames);
+
+    // Insert mentions into message
+    const mentionText = memberNames.map(name => `@${name}`).join(' ');
+    const currentMessage = message.trim();
+    const newMessage = currentMessage ? `${currentMessage} ${mentionText}` : mentionText;
+    setMessage(newMessage);
+
+    toast.success(`${memberNames.length} member(s) mentioned`);
+  };
+
   const handleSendMessage = async () => {
     if (!message.trim() && !selectedFile) {
       toast.error('Please enter a message or select a file');
@@ -98,13 +116,16 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
         'text',
         undefined,
         undefined,
-        replyingTo?.id
+        replyingTo?.id,
+        selectedMentions.length > 0 ? selectedMentions : undefined
       );
 
       if (result.success) {
         toast.success('Message sent successfully');
         setMessage('');
         handleRemoveFile();
+        setSelectedMentions([]);
+        setMentionedNames([]);
         onCancelReply?.(); // Clear reply state
         onMessageSent?.();
       } else {
@@ -237,6 +258,32 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
         </div>
       )}
 
+      {/* Mentions Preview */}
+      {selectedMentions.length > 0 && (
+        <div className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 rounded">
+          <AtSign className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+              Mentioning {selectedMentions.length} member(s)
+            </p>
+            <p className="text-xs text-blue-600 dark:text-blue-400 truncate">
+              {mentionedNames.join(', ')}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSelectedMentions([]);
+              setMentionedNames([]);
+            }}
+            className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* Message Input Area */}
       <div className="flex items-end gap-2">
         <div className="flex gap-1">
@@ -292,6 +339,17 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
             className="hidden"
             onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
           />
+
+          {/* Mention Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isSending}
+            title="Mention members"
+            onClick={() => setShowMentionSelector(true)}
+          >
+            <AtSign className="h-5 w-5" />
+          </Button>
 
           {/* Broadcast Button */}
           <Button
@@ -434,6 +492,14 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
       <ScheduledBroadcastsDialog
         open={showScheduledBroadcastsDialog}
         onOpenChange={setShowScheduledBroadcastsDialog}
+      />
+
+      {/* Mention Selector Dialog */}
+      <MentionSelector
+        open={showMentionSelector}
+        onOpenChange={setShowMentionSelector}
+        groupId={groupId}
+        onMentionsSelected={handleMentionsSelected}
       />
     </div>
   );

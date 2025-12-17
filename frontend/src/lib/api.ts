@@ -103,7 +103,7 @@ export const api = {
     return response.json();
   },
 
-  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], allowMultipleAnswers?: boolean, replyToMessageId?: string) {
+  async sendMessage(groupId: string, message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], allowMultipleAnswers?: boolean, replyToMessageId?: string, mentions?: string[]) {
     const formData = new FormData();
     formData.append('groupId', groupId);
     formData.append('message', message);
@@ -128,6 +128,10 @@ export const api = {
       formData.append('replyToMessageId', replyToMessageId);
     }
 
+    if (mentions && mentions.length > 0) {
+      formData.append('mentions', JSON.stringify(mentions));
+    }
+
     const token = localStorage.getItem('token');
     const headers: HeadersInit = {};
     if (token) {
@@ -149,7 +153,7 @@ export const api = {
     return response.json();
   },
 
-  async broadcastMessage(groupIds: string[], message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean) {
+  async broadcastMessage(groupIds: string[], message: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean, mentions?: string[]) {
     const formData = new FormData();
     formData.append('groupIds', JSON.stringify(groupIds));
     formData.append('message', message);
@@ -171,6 +175,10 @@ export const api = {
       formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
     }
 
+    if (mentions && mentions.length > 0) {
+      formData.append('mentions', JSON.stringify(mentions));
+    }
+
     const token = localStorage.getItem('token');
     const headers: HeadersInit = {};
     if (token) {
@@ -185,7 +193,7 @@ export const api = {
     return response.json();
   },
 
-  async schedulebroadcast(groupIds: string[], message: string, scheduledTime: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean) {
+  async schedulebroadcast(groupIds: string[], message: string, scheduledTime: string, file?: File, messageType?: 'text' | 'poll', pollOptions?: string[], gapTime?: number, allowMultipleAnswers?: boolean, mentions?: string[]) {
     const formData = new FormData();
     formData.append('groupIds', JSON.stringify(groupIds));
     formData.append('message', message);
@@ -206,6 +214,10 @@ export const api = {
 
     if (allowMultipleAnswers !== undefined) {
       formData.append('allowMultipleAnswers', allowMultipleAnswers.toString());
+    }
+
+    if (mentions && mentions.length > 0) {
+      formData.append('mentions', JSON.stringify(mentions));
     }
 
     const token = localStorage.getItem('token');
@@ -310,6 +322,14 @@ export const api = {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify({ isAdmin }),
+    });
+    return response.json();
+  },
+
+  async deleteUser(userId: number) {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
     });
     return response.json();
   },

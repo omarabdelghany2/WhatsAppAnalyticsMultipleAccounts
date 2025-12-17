@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Shield, ShieldOff, UserCog, ArrowLeft, RefreshCw } from "lucide-react";
+import { Loader2, Shield, ShieldOff, UserCog, ArrowLeft, RefreshCw, Trash2, Eye } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -32,8 +32,11 @@ export default function Dashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<number | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [actionType, setActionType] = useState<'grant' | 'revoke'>('grant');
   const { toast } = useToast();
   const { user: currentUser, logout } = useAuth();
@@ -120,6 +123,54 @@ export default function Dashboard() {
       setUpdating(null);
       setDialogOpen(false);
       setSelectedUser(null);
+    }
+  };
+
+  const handleDeleteUser = (user: User) => {
+    if (user.id === currentUser?.id) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "You cannot delete your own account",
+      });
+      return;
+    }
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    try {
+      setDeleting(userToDelete.id);
+      const response = await api.deleteUser(userToDelete.id);
+
+      if (response.success) {
+        toast({
+          title: "Success",
+          description: response.message,
+        });
+
+        // Remove user from the list
+        setUsers(users.filter(u => u.id !== userToDelete.id));
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: response.error || "Failed to delete user",
+        });
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to delete user",
+      });
+    } finally {
+      setDeleting(null);
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
     }
   };
 
@@ -261,6 +312,7 @@ export default function Dashboard() {
                       <TableHead>WhatsApp</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead className="text-right">Admin Access</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -305,6 +357,32 @@ export default function Dashboard() {
                             )}
                           </div>
                         </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.location.href = `/dashboard/view/${user.id}`}
+                              title="View user data"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDeleteUser(user)}
+                              disabled={deleting === user.id || user.id === currentUser?.id}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              title={user.id === currentUser?.id ? "Cannot delete your own account" : "Delete user"}
+                            >
+                              {deleting === user.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -314,7 +392,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Confirmation Dialog */}
+        {/* Admin Toggle Confirmation Dialog */}
         <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -355,6 +433,32 @@ export default function Dashboard() {
                     Revoke Access
                   </>
                 )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete User Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete User Account</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete the account for{' '}
+                <span className="font-semibold">{userToDelete?.username}</span> ({userToDelete?.email})?
+                <span className="block mt-2 text-red-600 dark:text-red-400 font-semibold">
+                  Warning: This action cannot be undone. All user data, messages, events, and WhatsApp sessions will be permanently deleted.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteUser}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete User
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

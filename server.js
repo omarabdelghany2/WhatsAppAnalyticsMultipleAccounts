@@ -264,6 +264,17 @@ function initializeDatabase() {
             )
         `);
 
+        // Add mentions column to scheduled_broadcasts table if it doesn't exist
+        db.run(`
+            ALTER TABLE scheduled_broadcasts ADD COLUMN mentions TEXT
+        `, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding mentions column:', err);
+            } else if (!err) {
+                console.log('✅ Added mentions column to scheduled_broadcasts table');
+            }
+        });
+
         // Add date column to existing events table if it doesn't exist
         db.run(`
             ALTER TABLE events ADD COLUMN date TEXT
@@ -718,6 +729,70 @@ app.put('/api/admin/users/:userId/admin', authenticateToken, authenticateAdmin, 
         res.json({
             success: true,
             message: `User ${isAdmin ? 'granted' : 'revoked'} admin privileges`
+        });
+    });
+});
+
+// Delete user (admin only)
+app.delete('/api/admin/users/:userId', authenticateToken, authenticateAdmin, (req, res) => {
+    const { userId } = req.params;
+    const requestingUserId = req.user.userId;
+
+    // Prevent admin from deleting themselves
+    if (parseInt(userId) === requestingUserId) {
+        return res.status(400).json({
+            success: false,
+            error: 'You cannot delete your own account'
+        });
+    }
+
+    // Delete user from database (CASCADE will handle related records)
+    db.run('DELETE FROM users WHERE id = ?', [userId], function(err) {
+        if (err) {
+            console.error('Error deleting user:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+
+        // Clean up WhatsApp client if exists
+        const userIdNum = parseInt(userId);
+        const userClient = whatsappClients.get(userIdNum);
+        if (userClient) {
+            try {
+                userClient.destroy();
+            } catch (e) {
+                console.error('Error destroying WhatsApp client:', e);
+            }
+            whatsappClients.delete(userIdNum);
+        }
+
+        // Clean up monitoring interval
+        const intervalId = userMonitoringIntervals.get(userIdNum);
+        if (intervalId) {
+            clearInterval(intervalId);
+            userMonitoringIntervals.delete(userIdNum);
+        }
+
+        // Clean up in-memory data
+        userMonitoredGroups.delete(userIdNum);
+        userClientReady.delete(userIdNum);
+        userQRCodes.delete(userIdNum);
+        userAuthStatus.delete(userIdNum);
+
+        console.log(`✅ User ${userId} deleted successfully`);
+
+        res.json({
+            success: true,
+            message: 'User deleted successfully'
         });
     });
 });
@@ -1656,7 +1731,7 @@ app.get('/api/messages/:groupId', authenticateToken, (req, res) => {
 // Send message to a group
 app.post('/api/messages/send', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupId, message, messageType, pollOptions, allowMultipleAnswers, replyToMessageId } = req.body;
+    const { groupId, message, messageType, pollOptions, allowMultipleAnswers, replyToMessageId, mentions } = req.body;
     const file = req.file;
 
     try {
@@ -1717,19 +1792,34 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
             });
         } else if (message && message.trim()) {
             // Send text message
+            // Parse mentions if provided
+            let parsedMentions = [];
+            if (mentions) {
+                try {
+                    parsedMentions = typeof mentions === 'string' ? JSON.parse(mentions) : mentions;
+                } catch (e) {
+                    console.error('Error parsing mentions:', e);
+                }
+            }
+
+            const messageOptions = {};
+            if (parsedMentions && parsedMentions.length > 0) {
+                messageOptions.mentions = parsedMentions;
+            }
+
             if (replyToMessageId) {
                 // Fetch the message to reply to
                 const messages = await chat.fetchMessages({ limit: 1000 });
                 const messageToReply = messages.find(msg => msg.id._serialized === replyToMessageId);
 
                 if (messageToReply) {
-                    sentMessage = await messageToReply.reply(message);
+                    sentMessage = await messageToReply.reply(message, null, messageOptions);
                 } else {
-                    // If message not found, send regular message
-                    sentMessage = await chat.sendMessage(message);
+                    // If message not found, send regular message with mentions
+                    sentMessage = await chat.sendMessage(message, messageOptions);
                 }
             } else {
-                sentMessage = await chat.sendMessage(message);
+                sentMessage = await chat.sendMessage(message, messageOptions);
             }
         } else {
             return res.status(400).json({
@@ -1830,7 +1920,7 @@ function getMediaTypeLabel(mimetype) {
 // Broadcast message to multiple groups
 app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers } = req.body;
+    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers, mentions } = req.body;
     const file = req.file;
 
     try {
@@ -1907,7 +1997,22 @@ app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), as
                         caption: message || ''
                     });
                 } else if (message && message.trim()) {
-                    sentMessage = await chat.sendMessage(message);
+                    // Parse mentions if provided
+                    let parsedMentions = [];
+                    if (mentions) {
+                        try {
+                            parsedMentions = typeof mentions === 'string' ? JSON.parse(mentions) : mentions;
+                        } catch (e) {
+                            console.error('Error parsing mentions:', e);
+                        }
+                    }
+
+                    const messageOptions = {};
+                    if (parsedMentions && parsedMentions.length > 0) {
+                        messageOptions.mentions = parsedMentions;
+                    }
+
+                    sentMessage = await chat.sendMessage(message, messageOptions);
                 } else {
                     errors.push({ groupId, error: 'Message content or file is required' });
                     continue;
@@ -1946,7 +2051,7 @@ app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), as
 // Schedule a broadcast for future execution
 app.post('/api/messages/broadcast/schedule', authenticateToken, upload.single('file'), async (req, res) => {
     const userId = req.user.userId;
-    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers, scheduledTime } = req.body;
+    const { groupIds, message, messageType, pollOptions, gapTime, allowMultipleAnswers, scheduledTime, mentions } = req.body;
     const file = req.file;
 
     try {
@@ -1993,8 +2098,8 @@ app.post('/api/messages/broadcast/schedule', authenticateToken, upload.single('f
             INSERT INTO scheduled_broadcasts (
                 user_id, group_ids, message, message_type, poll_options,
                 allow_multiple_answers, gap_time, scheduled_time, status,
-                file_data, file_mimetype, file_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_data, file_mimetype, file_name, mentions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             userId,
             JSON.stringify(parsedGroupIds),
@@ -2007,7 +2112,8 @@ app.post('/api/messages/broadcast/schedule', authenticateToken, upload.single('f
             'pending',
             fileData,
             fileMimetype,
-            fileName
+            fileName,
+            mentions || null
         ], function(err) {
             if (err) {
                 console.error('Error scheduling broadcast:', err);
@@ -4243,6 +4349,7 @@ async function executeScheduledBroadcast(broadcast) {
     const message = broadcast.message;
     const messageType = broadcast.message_type;
     const pollOptions = broadcast.poll_options ? JSON.parse(broadcast.poll_options) : null;
+    const mentions = broadcast.mentions ? JSON.parse(broadcast.mentions) : null;
     const gapTime = broadcast.gap_time || 10;
     const gapTimeMs = gapTime * 1000;
     const allowMultipleAnswers = broadcast.allow_multiple_answers === 1;
@@ -4308,7 +4415,11 @@ async function executeScheduledBroadcast(broadcast) {
                         caption: message || ''
                     });
                 } else if (message && message.trim()) {
-                    sentMessage = await chat.sendMessage(message);
+                    const messageOptions = {};
+                    if (mentions && mentions.length > 0) {
+                        messageOptions.mentions = mentions;
+                    }
+                    sentMessage = await chat.sendMessage(message, messageOptions);
                 } else {
                     errors.push({ groupId, error: 'Message content or file is required' });
                     continue;
