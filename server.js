@@ -828,6 +828,8 @@ app.get('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const { groupId } = req.params;
 
+    console.log(`📥 Getting welcome settings for user ${userId}, group ${groupId}`);
+
     db.get(`
         SELECT * FROM welcome_message_settings
         WHERE user_id = ? AND group_id = ?
@@ -839,6 +841,8 @@ app.get('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
                 error: 'Database error'
             });
         }
+
+        console.log(`📤 Welcome settings result:`, row);
 
         res.json({
             success: true,
@@ -852,6 +856,8 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const { groupId } = req.params;
     const { enabled, messageText, memberThreshold, delayMinutes } = req.body;
+
+    console.log(`💾 Saving welcome settings: user=${userId}, group=${groupId}, enabled=${enabled}, threshold=${memberThreshold}, delay=${delayMinutes}`);
 
     // Validation
     if (typeof enabled !== 'boolean') {
@@ -900,6 +906,8 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
                 error: 'Database error'
             });
         }
+
+        console.log(`✅ Welcome settings saved successfully for user ${userId}, group ${groupId}`);
 
         res.json({
             success: true,
@@ -4059,6 +4067,8 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
 // Check and trigger welcome message for new members
 async function checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupName, newMembers) {
     try {
+        console.log(`🔍 Checking welcome message for user ${userId}, group ${groupId}, ${newMembers.length} new member(s)`);
+
         // Get welcome message settings for this group
         const settings = await new Promise((resolve, reject) => {
             db.get(`
@@ -4072,8 +4082,11 @@ async function checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupN
 
         if (!settings) {
             // No welcome message configured or disabled
+            console.log(`⚠️  No enabled welcome message settings found for user ${userId}, group ${groupId}`);
             return;
         }
+
+        console.log(`✅ Found welcome settings: threshold=${settings.member_threshold}, delay=${settings.delay_minutes} mins`);
 
         const key = `${userId}_${groupId}`;
         let pending = pendingWelcomeMessages.get(key);
