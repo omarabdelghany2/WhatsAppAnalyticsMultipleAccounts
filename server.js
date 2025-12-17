@@ -4269,23 +4269,21 @@ async function sendWelcomeMessage(userId, userClient, groupId, groupName, settin
         // Build mention text for new members at the top
         const newMemberMentionText = members.map(m => `@${m.phone}`).join(' ');
 
-        // Build specific mentions text
+        // Build specific mentions text for the bottom
         const specificMentionText = specificMentionPhones.map(phone => `@${phone}`).join(' ');
 
-        // Combine new members + specific mentions at the top
-        let topMentions = newMemberMentionText;
-        if (specificMentionText) {
-            topMentions = `${newMemberMentionText} ${specificMentionText}`;
-        }
-
-        console.log(`📝 Top mentions text: ${topMentions}`);
+        console.log(`📝 New members mention text (top): ${newMemberMentionText}`);
+        console.log(`📝 Specific mentions text (bottom): ${specificMentionText}`);
         console.log(`📝 Total mention contacts: ${mentionContacts.length}`);
 
         // Process message text to replace mentions with proper format
         let processedMessageText = settings.message_text;
 
-        // Build full message: mentions at top, then message text
-        const fullMessage = `${topMentions}\n\n${processedMessageText}`;
+        // Build full message: new members at top, message text in middle, specific mentions at bottom
+        let fullMessage = `${newMemberMentionText}\n\n${processedMessageText}`;
+        if (specificMentionText) {
+            fullMessage = `${newMemberMentionText}\n\n${processedMessageText}\n\n${specificMentionText}`;
+        }
 
         const messageOptions = {};
         if (mentionContacts.length > 0) {

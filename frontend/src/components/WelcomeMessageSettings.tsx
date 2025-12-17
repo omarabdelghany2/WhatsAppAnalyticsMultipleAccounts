@@ -305,7 +305,7 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                 className="resize-none"
               />
               <p className="text-xs text-gray-500">
-                {translateMode ? '新成员将在顶部被提及，然后是此消息' : 'New members will be mentioned at the TOP, then this message will follow'}
+                {translateMode ? '新成员将在顶部被提及，然后是此消息，特定提及将在底部' : 'New members will be mentioned at the TOP, then this message, then specific mentions at the BOTTOM'}
               </p>
             </div>
 
@@ -316,7 +316,7 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                 {translateMode ? '特定提及（始终提及）' : 'Specific Mentions (Always Mentioned)'}
               </Label>
               <p className="text-xs text-gray-500 mb-2">
-                {translateMode ? '选择要在欢迎消息中始终提及的成员' : 'Select members to always mention in the welcome message text'}
+                {translateMode ? '选择要在欢迎消息底部始终提及的成员' : 'Select members to always mention at the bottom of the welcome message'}
               </p>
               {specificMentionNames.length > 0 && (
                 <div className="flex flex-wrap gap-2 p-2 border rounded-lg bg-gray-50 dark:bg-gray-800">
@@ -481,16 +481,16 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
               <p className="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-2">
                 {translateMode ? '示例预览：' : 'Example Preview:'}
               </p>
-              <div className="text-sm text-gray-700 dark:text-gray-300 space-y-1">
+              <div className="text-sm text-gray-700 dark:text-gray-300 space-y-2">
                 <p className="text-blue-600 dark:text-blue-400">@201234567890 @209876543210 @201122334455</p>
-                <p>{messageText}</p>
+                <p className="whitespace-pre-wrap">{messageText}</p>
                 {specificMentionNames.length > 0 && (
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-2">
-                    {translateMode ? `（另外还会提及：${specificMentionNames.join('，')}）` : `(Plus always mentioning: ${specificMentionNames.join(', ')})`}
+                  <p className="text-green-600 dark:text-green-400">
+                    @{specificMentionNames.join(' @')}
                   </p>
                 )}
                 {imageEnabled && (
-                  <p className="text-xs text-purple-600 dark:text-purple-400 mt-2">
+                  <p className="text-xs text-purple-600 dark:text-purple-400 mt-2 pt-2 border-t border-blue-200 dark:border-blue-700">
                     {translateMode ? '📷 第二条消息：将发送带标题的图片' : '📷 Second message: Image with caption will be sent'}
                   </p>
                 )}
