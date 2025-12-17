@@ -4246,14 +4246,20 @@ async function sendWelcomeMessage(userId, userClient, groupId, groupName, settin
             }
         }
 
-        // Fetch Contact objects for specific mentions
+        // Fetch Contact objects for specific mentions and build their mention text
         const specificMentionContacts = [];
+        const specificMentionPhones = [];
         for (const mentionId of specificMentions) {
             try {
                 const contact = await userClient.getContactById(mentionId);
                 if (contact) {
                     specificMentionContacts.push(contact);
                     mentionContacts.push(contact); // Add to main mentions array
+
+                    // Extract phone number for mention text
+                    const phone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || mentionId.split('@')[0]);
+                    specificMentionPhones.push(phone);
+                    console.log(`✅ Added specific mention: ${contact.pushname || contact.name || phone} (${phone})`);
                 }
             } catch (err) {
                 console.error(`Error getting specific mention contact ${mentionId}:`, err);
@@ -4263,11 +4269,23 @@ async function sendWelcomeMessage(userId, userClient, groupId, groupName, settin
         // Build mention text for new members at the top
         const newMemberMentionText = members.map(m => `@${m.phone}`).join(' ');
 
+        // Build specific mentions text
+        const specificMentionText = specificMentionPhones.map(phone => `@${phone}`).join(' ');
+
+        // Combine new members + specific mentions at the top
+        let topMentions = newMemberMentionText;
+        if (specificMentionText) {
+            topMentions = `${newMemberMentionText} ${specificMentionText}`;
+        }
+
+        console.log(`📝 Top mentions text: ${topMentions}`);
+        console.log(`📝 Total mention contacts: ${mentionContacts.length}`);
+
         // Process message text to replace mentions with proper format
         let processedMessageText = settings.message_text;
 
         // Build full message: mentions at top, then message text
-        const fullMessage = `${newMemberMentionText}\n\n${processedMessageText}`;
+        const fullMessage = `${topMentions}\n\n${processedMessageText}`;
 
         const messageOptions = {};
         if (mentionContacts.length > 0) {
