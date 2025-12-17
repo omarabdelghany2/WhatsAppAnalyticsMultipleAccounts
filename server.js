@@ -900,14 +900,23 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
             updated_at = CURRENT_TIMESTAMP
     `, [userId, groupId, enabled ? 1 : 0, messageText, memberThreshold, delayMinutes], function(err) {
         if (err) {
-            console.error('Error saving welcome settings:', err);
+            console.error('❌ Error saving welcome settings:', err);
             return res.status(500).json({
                 success: false,
-                error: 'Database error'
+                error: 'Database error: ' + err.message
             });
         }
 
-        console.log(`✅ Welcome settings saved successfully for user ${userId}, group ${groupId}`);
+        console.log(`✅ Welcome settings saved successfully for user ${userId}, group ${groupId}, changes=${this.changes}`);
+
+        // Verify the save by reading it back
+        db.get(`SELECT * FROM welcome_message_settings WHERE user_id = ? AND group_id = ?`, [userId, groupId], (err2, row) => {
+            if (err2) {
+                console.error('❌ Error verifying saved settings:', err2);
+            } else {
+                console.log(`🔍 Verification - settings now in DB:`, row);
+            }
+        });
 
         res.json({
             success: true,
@@ -3785,14 +3794,27 @@ async function checkMessagesInGroup(userId, userClient, groupId, groupInfo) {
             const currentMembers = new Set(group.participants.map(p => p.id._serialized));
 
             // Detect joins
+            const newJoinedMembers = [];
             for (const memberId of currentMembers) {
                 if (!groupInfo.previousMembers.has(memberId) && !groupInfo.isFirstRun) {
                     const event = await createEventForUser(userId, userClient, memberId, 'JOIN', groupInfo.name, groupId);
                     if (event) {
                         console.log(`🟢 User ${userId} - ${event.memberName} joined ${groupInfo.name}`);
                         broadcast({ type: 'event', event: event });
+
+                        // Add to list for welcome message
+                        newJoinedMembers.push({
+                            id: memberId,
+                            name: event.memberName,
+                            phone: event.memberId
+                        });
                     }
                 }
+            }
+
+            // Trigger welcome message if members joined
+            if (newJoinedMembers.length > 0) {
+                await checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupInfo.name, newJoinedMembers);
             }
 
             // Detect leaves
