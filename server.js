@@ -3923,6 +3923,16 @@ async function processMessageForUser(userId, userClient, msg, groupName, groupId
                     if (event) {
                         console.log(`📝 User ${userId} - Detected ${eventType} event: ${memberName} in ${groupName}`);
                         broadcast({ type: 'event', event: event });
+
+                        // Trigger welcome message if it's a JOIN event
+                        if (eventType === 'JOIN') {
+                            const newMember = {
+                                id: memberId,
+                                name: memberName,
+                                phone: event.memberId
+                            };
+                            await checkAndTriggerWelcomeMessage(userId, userClient, groupId, groupName, [newMember]);
+                        }
                     }
                 }
             }

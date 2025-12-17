@@ -71,10 +71,10 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
           >
             <button
               onClick={() => onSelectGroup(group.id)}
-              className="w-full p-4 pr-12 text-left"
+              className="w-full p-4 pr-20 text-left"
             >
               <div className="flex items-start justify-between mb-1">
-                <h3 className="font-semibold text-foreground truncate">{group.name}</h3>
+                <h3 className="font-semibold text-foreground truncate pr-2">{group.name}</h3>
                 <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">
                   {group.timestamp}
                 </span>
@@ -92,30 +92,30 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
                 )}
               </div>
             </button>
-            <div className="absolute right-2 top-2 flex gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+            <div className="absolute right-2 bottom-2 flex gap-1">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7 bg-background/80 hover:bg-background shadow-sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleOpenSettings(group.id, group.name);
                 }}
                 title="Welcome message settings"
               >
-                <Settings className="h-4 w-4" />
+                <Settings className="h-3.5 w-3.5" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7 bg-background/80 hover:bg-background shadow-sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   onDeleteGroup(group.id);
                 }}
                 title="Remove group"
               >
-                <X className="h-4 w-4 text-destructive" />
+                <X className="h-3.5 w-3.5 text-destructive" />
               </Button>
             </div>
           </div>
