@@ -134,6 +134,7 @@ export function GroupList({ groups, selectedGroupId, onSelectGroup, onAddGroup, 
           }}
           groupId={settingsGroupId}
           groupName={settingsGroupName}
+          translateMode={translateMode}
         />
       )}
     </div>

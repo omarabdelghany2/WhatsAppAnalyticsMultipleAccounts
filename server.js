@@ -292,6 +292,38 @@ function initializeDatabase() {
             }
         });
 
+        // Add image fields to welcome_message_settings table if they don't exist
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN image_enabled BOOLEAN DEFAULT 0`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding image_enabled column:', err);
+            }
+        });
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN image_data TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding image_data column:', err);
+            }
+        });
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN image_mimetype TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding image_mimetype column:', err);
+            }
+        });
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN image_filename TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding image_filename column:', err);
+            }
+        });
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN image_caption TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding image_caption column:', err);
+            }
+        });
+        db.run(`ALTER TABLE welcome_message_settings ADD COLUMN specific_mentions TEXT`, (err) => {
+            if (err && !err.message.includes('duplicate column')) {
+                console.error('Error adding specific_mentions column:', err);
+            }
+        });
+
         // Add date column to existing events table if it doesn't exist
         db.run(`
             ALTER TABLE events ADD COLUMN date TEXT
@@ -852,15 +884,15 @@ app.get('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
 });
 
 // Save or update welcome message settings for a group
-app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
+app.post('/api/welcome-settings/:groupId', authenticateToken, upload.single('image'), (req, res) => {
     const userId = req.user.userId;
     const { groupId } = req.params;
-    const { enabled, messageText, memberThreshold, delayMinutes } = req.body;
+    const { enabled, messageText, memberThreshold, delayMinutes, imageEnabled, imageCaption, specificMentions } = req.body;
 
-    console.log(`💾 Saving welcome settings: user=${userId}, group=${groupId}, enabled=${enabled}, threshold=${memberThreshold}, delay=${delayMinutes}`);
+    console.log(`💾 Saving welcome settings: user=${userId}, group=${groupId}, enabled=${enabled}, threshold=${memberThreshold}, delay=${delayMinutes}, imageEnabled=${imageEnabled}`);
 
     // Validation
-    if (typeof enabled !== 'boolean') {
+    if (typeof enabled !== 'boolean' && enabled !== 'true' && enabled !== 'false') {
         return res.status(400).json({
             success: false,
             error: 'enabled must be a boolean'
@@ -881,24 +913,54 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
         });
     }
 
-    if (!delayMinutes || delayMinutes < 0) {
+    if (delayMinutes === undefined || delayMinutes < 0) {
         return res.status(400).json({
             success: false,
             error: 'delayMinutes must be at least 0'
         });
     }
 
+    // Parse boolean values if they come as strings
+    const enabledBool = enabled === true || enabled === 'true';
+    const imageEnabledBool = imageEnabled === true || imageEnabled === 'true';
+
+    // Handle image data
+    let imageData = null;
+    let imageMimetype = null;
+    let imageFilename = null;
+
+    if (req.file) {
+        imageData = req.file.buffer.toString('base64');
+        imageMimetype = req.file.mimetype;
+        imageFilename = req.file.originalname;
+    }
+
+    // Parse specific mentions if provided
+    const specificMentionsStr = specificMentions || '[]';
+
     // Insert or update
     db.run(`
-        INSERT INTO welcome_message_settings (user_id, group_id, enabled, message_text, member_threshold, delay_minutes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO welcome_message_settings (
+            user_id, group_id, enabled, message_text, member_threshold, delay_minutes,
+            image_enabled, image_data, image_mimetype, image_filename, image_caption, specific_mentions,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id, group_id) DO UPDATE SET
             enabled = excluded.enabled,
             message_text = excluded.message_text,
             member_threshold = excluded.member_threshold,
             delay_minutes = excluded.delay_minutes,
+            image_enabled = excluded.image_enabled,
+            image_data = CASE WHEN excluded.image_data IS NOT NULL THEN excluded.image_data ELSE image_data END,
+            image_mimetype = CASE WHEN excluded.image_mimetype IS NOT NULL THEN excluded.image_mimetype ELSE image_mimetype END,
+            image_filename = CASE WHEN excluded.image_filename IS NOT NULL THEN excluded.image_filename ELSE image_filename END,
+            image_caption = excluded.image_caption,
+            specific_mentions = excluded.specific_mentions,
             updated_at = CURRENT_TIMESTAMP
-    `, [userId, groupId, enabled ? 1 : 0, messageText, memberThreshold, delayMinutes], function(err) {
+    `, [userId, groupId, enabledBool ? 1 : 0, messageText, memberThreshold, delayMinutes,
+        imageEnabledBool ? 1 : 0, imageData, imageMimetype, imageFilename, imageCaption, specificMentionsStr
+    ], function(err) {
         if (err) {
             console.error('❌ Error saving welcome settings:', err);
             return res.status(500).json({
@@ -914,7 +976,7 @@ app.post('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
             if (err2) {
                 console.error('❌ Error verifying saved settings:', err2);
             } else {
-                console.log(`🔍 Verification - settings now in DB:`, row);
+                console.log(`🔍 Verification - settings now in DB:`, row ? 'Found' : 'Not found');
             }
         });
 
@@ -4159,7 +4221,7 @@ async function sendWelcomeMessage(userId, userClient, groupId, groupName, settin
             return;
         }
 
-        // Build mentions array as Contact objects
+        // Build mentions array for new members as Contact objects
         const mentionContacts = [];
         for (const member of members) {
             try {
@@ -4172,18 +4234,72 @@ async function sendWelcomeMessage(userId, userClient, groupId, groupName, settin
             }
         }
 
-        // Build message with phone number mentions
-        const mentionText = members.map(m => `@${m.phone}`).join(' ');
-        const fullMessage = `${settings.message_text}\n\n${mentionText}`;
+        // Add specific mentions (always mentioned members)
+        let specificMentions = [];
+        if (settings.specific_mentions) {
+            try {
+                specificMentions = JSON.parse(settings.specific_mentions);
+            } catch (err) {
+                console.error('Error parsing specific mentions:', err);
+            }
+        }
 
-        // Send message with mentions
+        // Fetch Contact objects for specific mentions
+        const specificMentionContacts = [];
+        for (const mentionId of specificMentions) {
+            try {
+                const contact = await userClient.getContactById(mentionId);
+                if (contact) {
+                    specificMentionContacts.push(contact);
+                    mentionContacts.push(contact); // Add to main mentions array
+                }
+            } catch (err) {
+                console.error(`Error getting specific mention contact ${mentionId}:`, err);
+            }
+        }
+
+        // Build mention text for new members at the top
+        const newMemberMentionText = members.map(m => `@${m.phone}`).join(' ');
+
+        // Process message text to replace mentions with proper format
+        let processedMessageText = settings.message_text;
+
+        // Build full message: mentions at top, then message text
+        const fullMessage = `${newMemberMentionText}\n\n${processedMessageText}`;
+
         const messageOptions = {};
         if (mentionContacts.length > 0) {
             messageOptions.mentions = mentionContacts;
         }
 
+        // Send text message
         await chat.sendMessage(fullMessage, messageOptions);
-        console.log(`✅ Welcome message sent to ${groupName}`);
+        console.log(`✅ Welcome text message sent to ${groupName}`);
+
+        // Send image message if enabled
+        if (settings.image_enabled && settings.image_data) {
+            try {
+                const imageBuffer = Buffer.from(settings.image_data, 'base64');
+                const media = new MessageMedia(settings.image_mimetype, settings.image_data, settings.image_filename);
+
+                // Caption can also have mentions
+                let caption = settings.image_caption || '';
+
+                const imageMessageOptions = {};
+                if (caption) {
+                    imageMessageOptions.caption = caption;
+                }
+                if (specificMentionContacts.length > 0 && caption) {
+                    // If caption has mentions, include them
+                    imageMessageOptions.mentions = specificMentionContacts;
+                }
+
+                await chat.sendMessage(media, imageMessageOptions);
+                console.log(`✅ Welcome image message sent to ${groupName}`);
+            } catch (imgErr) {
+                console.error('Error sending welcome image:', imgErr);
+            }
+        }
     } catch (error) {
         console.error('Error sending welcome message:', error);
     }
@@ -4741,21 +4857,8 @@ async function executeScheduledBroadcast(broadcast) {
                 } else if (message && message.trim()) {
                     const messageOptions = {};
                     if (mentions && mentions.length > 0) {
-                        // Convert mention IDs to Contact objects
-                        const mentionContacts = [];
-                        for (const mentionId of mentions) {
-                            try {
-                                const contact = await userClient.getContactById(mentionId);
-                                if (contact) {
-                                    mentionContacts.push(contact);
-                                }
-                            } catch (err) {
-                                console.error(`Error getting contact for mention ${mentionId}:`, err);
-                            }
-                        }
-                        if (mentionContacts.length > 0) {
-                            messageOptions.mentions = mentionContacts;
-                        }
+                        // Use mention IDs directly (new whatsapp-web.js format)
+                        messageOptions.mentions = mentions;
                     }
                     sentMessage = await chat.sendMessage(message, messageOptions);
                 } else {

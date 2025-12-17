@@ -412,11 +412,40 @@ export const api = {
     return response.json();
   },
 
-  async saveWelcomeSettings(groupId: string, enabled: boolean, messageText: string, memberThreshold: number, delayMinutes: number) {
+  async saveWelcomeSettings(
+    groupId: string,
+    enabled: boolean,
+    messageText: string,
+    memberThreshold: number,
+    delayMinutes: number,
+    imageEnabled: boolean,
+    imageFile: File | null,
+    imageCaption: string,
+    specificMentions: string[]
+  ) {
+    const formData = new FormData();
+    formData.append('enabled', enabled.toString());
+    formData.append('messageText', messageText);
+    formData.append('memberThreshold', memberThreshold.toString());
+    formData.append('delayMinutes', delayMinutes.toString());
+    formData.append('imageEnabled', imageEnabled.toString());
+    formData.append('imageCaption', imageCaption);
+    formData.append('specificMentions', JSON.stringify(specificMentions));
+
+    if (imageFile) {
+      formData.append('image', imageFile);
+    }
+
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/welcome-settings/${groupId}`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ enabled, messageText, memberThreshold, delayMinutes }),
+      headers: headers,
+      body: formData,
     });
     return response.json();
   },
