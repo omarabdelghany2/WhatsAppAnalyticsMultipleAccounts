@@ -1804,7 +1804,21 @@ app.post('/api/messages/send', authenticateToken, upload.single('file'), async (
 
             const messageOptions = {};
             if (parsedMentions && parsedMentions.length > 0) {
-                messageOptions.mentions = parsedMentions;
+                // Convert mention IDs to Contact objects
+                const mentionContacts = [];
+                for (const mentionId of parsedMentions) {
+                    try {
+                        const contact = await userClient.getContactById(mentionId);
+                        if (contact) {
+                            mentionContacts.push(contact);
+                        }
+                    } catch (err) {
+                        console.error(`Error getting contact for mention ${mentionId}:`, err);
+                    }
+                }
+                if (mentionContacts.length > 0) {
+                    messageOptions.mentions = mentionContacts;
+                }
             }
 
             if (replyToMessageId) {
@@ -2009,7 +2023,21 @@ app.post('/api/messages/broadcast', authenticateToken, upload.single('file'), as
 
                     const messageOptions = {};
                     if (parsedMentions && parsedMentions.length > 0) {
-                        messageOptions.mentions = parsedMentions;
+                        // Convert mention IDs to Contact objects
+                        const mentionContacts = [];
+                        for (const mentionId of parsedMentions) {
+                            try {
+                                const contact = await userClient.getContactById(mentionId);
+                                if (contact) {
+                                    mentionContacts.push(contact);
+                                }
+                            } catch (err) {
+                                console.error(`Error getting contact for mention ${mentionId}:`, err);
+                            }
+                        }
+                        if (mentionContacts.length > 0) {
+                            messageOptions.mentions = mentionContacts;
+                        }
                     }
 
                     sentMessage = await chat.sendMessage(message, messageOptions);
@@ -4417,7 +4445,21 @@ async function executeScheduledBroadcast(broadcast) {
                 } else if (message && message.trim()) {
                     const messageOptions = {};
                     if (mentions && mentions.length > 0) {
-                        messageOptions.mentions = mentions;
+                        // Convert mention IDs to Contact objects
+                        const mentionContacts = [];
+                        for (const mentionId of mentions) {
+                            try {
+                                const contact = await userClient.getContactById(mentionId);
+                                if (contact) {
+                                    mentionContacts.push(contact);
+                                }
+                            } catch (err) {
+                                console.error(`Error getting contact for mention ${mentionId}:`, err);
+                            }
+                        }
+                        if (mentionContacts.length > 0) {
+                            messageOptions.mentions = mentionContacts;
+                        }
                     }
                     sentMessage = await chat.sendMessage(message, messageOptions);
                 } else {

@@ -88,12 +88,13 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
     if (documentInputRef.current) documentInputRef.current.value = '';
   };
 
-  const handleMentionsSelected = (mentionIds: string[], memberNames: string[]) => {
+  const handleMentionsSelected = (mentionIds: string[], memberNames: string[], memberPhones: string[]) => {
     setSelectedMentions(mentionIds);
     setMentionedNames(memberNames);
 
-    // Insert mentions into message
-    const mentionText = memberNames.map(name => `@${name}`).join(' ');
+    // Insert mentions into message using @[phone] format for better WhatsApp detection
+    // WhatsApp will match these with the Contact objects we send
+    const mentionText = memberNames.map((name, index) => `@${memberPhones[index]}`).join(' ');
     const currentMessage = message.trim();
     const newMessage = currentMessage ? `${currentMessage} ${mentionText}` : mentionText;
     setMessage(newMessage);

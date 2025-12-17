@@ -19,7 +19,7 @@ interface MentionSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   groupId: string;
-  onMentionsSelected: (mentions: string[], memberNames: string[]) => void;
+  onMentionsSelected: (mentions: string[], memberNames: string[], memberPhones: string[]) => void;
 }
 
 export function MentionSelector({ open, onOpenChange, groupId, onMentionsSelected }: MentionSelectorProps) {
@@ -71,11 +71,11 @@ export function MentionSelector({ open, onOpenChange, groupId, onMentionsSelecte
 
   const handleConfirm = () => {
     const selectedMemberIds = Array.from(selectedMembers);
-    const selectedMemberNames = members
-      .filter(m => selectedMembers.has(m.id))
-      .map(m => m.name);
+    const selectedMembersData = members.filter(m => selectedMembers.has(m.id));
+    const selectedMemberNames = selectedMembersData.map(m => m.name);
+    const selectedMemberPhones = selectedMembersData.map(m => m.phone);
 
-    onMentionsSelected(selectedMemberIds, selectedMemberNames);
+    onMentionsSelected(selectedMemberIds, selectedMemberNames, selectedMemberPhones);
     setSelectedMembers(new Set());
     setSearchQuery('');
     onOpenChange(false);
