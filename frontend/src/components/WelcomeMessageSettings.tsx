@@ -50,10 +50,17 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
   const [showMemberSelector, setShowMemberSelector] = useState(false);
   const [groupMembers, setGroupMembers] = useState<Array<{id: string, name: string, phone: string, isAdmin: boolean}>>([]);
 
+  // Admin-only schedule
+  const [adminOnlyEnabled, setAdminOnlyEnabled] = useState(false);
+  const [openTime, setOpenTime] = useState('09:00');
+  const [closeTime, setCloseTime] = useState('23:00');
+  const [hasAdminOnlySettings, setHasAdminOnlySettings] = useState(false);
+
   useEffect(() => {
     if (open && groupId) {
       fetchSettings();
       fetchGroupMembers();
+      fetchAdminOnlySettings();
     }
   }, [open, groupId]);
 
@@ -133,6 +140,26 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
     }
   }, [groupMembers, specificMentions]);
 
+  const fetchAdminOnlySettings = async () => {
+    try {
+      const response = await api.getAdminOnlySchedule(groupId);
+      if (response.success && response.settings) {
+        setAdminOnlyEnabled(response.settings.enabled === 1);
+        setOpenTime(response.settings.open_time || '09:00');
+        setCloseTime(response.settings.close_time || '23:00');
+        setHasAdminOnlySettings(true);
+      } else {
+        // No settings found, use defaults
+        setAdminOnlyEnabled(false);
+        setOpenTime('09:00');
+        setCloseTime('23:00');
+        setHasAdminOnlySettings(false);
+      }
+    } catch (error) {
+      console.error('Error fetching admin-only settings:', error);
+    }
+  };
+
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -201,8 +228,28 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
       );
 
       if (response.success) {
-        toast.success(response.message);
         setHasSettings(true);
+
+        // Also save admin-only schedule settings
+        try {
+          const adminResponse = await api.saveAdminOnlySchedule(
+            groupId,
+            adminOnlyEnabled,
+            openTime,
+            closeTime
+          );
+
+          if (adminResponse.success) {
+            setHasAdminOnlySettings(true);
+            toast.success(translateMode ? '所有设置已保存' : 'All settings saved successfully');
+          } else {
+            toast.error(adminResponse.error || (translateMode ? '保存管理员模式设置失败' : 'Failed to save admin-only settings'));
+          }
+        } catch (adminError) {
+          console.error('Error saving admin-only settings:', adminError);
+          toast.error(translateMode ? '保存管理员模式设置失败' : 'Failed to save admin-only settings');
+        }
+
         onOpenChange(false);
       } else {
         toast.error(response.error || (translateMode ? '保存设置失败' : 'Failed to save settings'));
@@ -226,6 +273,15 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
       const response = await api.deleteWelcomeSettings(groupId);
 
       if (response.success) {
+        // Also delete admin-only settings if they exist
+        if (hasAdminOnlySettings) {
+          try {
+            await api.deleteAdminOnlySchedule(groupId);
+          } catch (adminError) {
+            console.error('Error deleting admin-only settings:', adminError);
+          }
+        }
+
         toast.success(response.message);
         // Reset to defaults
         setEnabled(false);
@@ -239,6 +295,13 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
         setSpecificMentions([]);
         setSpecificMentionNames([]);
         setHasSettings(false);
+
+        // Reset admin-only settings
+        setAdminOnlyEnabled(false);
+        setOpenTime('09:00');
+        setCloseTime('23:00');
+        setHasAdminOnlySettings(false);
+
         onOpenChange(false);
       } else {
         toast.error(response.error || (translateMode ? '删除设置失败' : 'Failed to delete settings'));
@@ -437,6 +500,79 @@ export function WelcomeMessageSettings({ open, onOpenChange, groupId, groupName,
                     <p className="text-xs text-gray-500">
                       {translateMode ? '特定提及可以包含在标题中' : 'Specific mentions can be included in the caption'}
                     </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Admin-Only Schedule Section */}
+            <div className="space-y-4 p-4 border rounded-lg border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-900/10">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label htmlFor="adminOnlyEnabled" className="text-base font-semibold flex items-center gap-2">
+                    <Settings className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                    {translateMode ? '定时管理员专属模式' : 'Scheduled Admin-Only Mode'}
+                  </Label>
+                  <p className="text-sm text-gray-500">
+                    {translateMode ? '自动控制群组何时开放（所有人可发言）和关闭（仅管理员可发言）' : 'Automatically control when the group is open (everyone can send) and closed (admins only)'}
+                  </p>
+                </div>
+                <Switch
+                  id="adminOnlyEnabled"
+                  checked={adminOnlyEnabled}
+                  onCheckedChange={setAdminOnlyEnabled}
+                />
+              </div>
+
+              {adminOnlyEnabled && (
+                <div className="space-y-4 pt-4 border-t border-orange-200 dark:border-orange-800">
+                  {/* Open Time */}
+                  <div className="space-y-2">
+                    <Label htmlFor="openTime" className="text-sm font-medium">
+                      {translateMode ? '开放时间（所有人可发言）' : 'Open Time (Everyone Can Send)'}
+                    </Label>
+                    <Input
+                      id="openTime"
+                      type="time"
+                      value={openTime}
+                      onChange={(e) => setOpenTime(e.target.value)}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-gray-500">
+                      {translateMode ? '群组将在此时间开放，允许所有成员发送消息' : 'Group will open at this time, allowing all members to send messages'}
+                    </p>
+                  </div>
+
+                  {/* Close Time */}
+                  <div className="space-y-2">
+                    <Label htmlFor="closeTime" className="text-sm font-medium">
+                      {translateMode ? '关闭时间（仅管理员可发言）' : 'Close Time (Admins Only)'}
+                    </Label>
+                    <Input
+                      id="closeTime"
+                      type="time"
+                      value={closeTime}
+                      onChange={(e) => setCloseTime(e.target.value)}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-gray-500">
+                      {translateMode ? '群组将在此时间关闭，仅允许管理员发送消息' : 'Group will close at this time, only admins can send messages'}
+                    </p>
+                  </div>
+
+                  {/* Schedule Preview */}
+                  <div className="p-3 bg-orange-100 dark:bg-orange-900/30 rounded-lg border border-orange-300 dark:border-orange-700">
+                    <p className="text-sm font-semibold text-orange-800 dark:text-orange-300 mb-1">
+                      {translateMode ? '📅 每日时间表：' : '📅 Daily Schedule:'}
+                    </p>
+                    <div className="text-sm text-orange-700 dark:text-orange-400 space-y-1">
+                      <p>
+                        🔓 <strong>{openTime}</strong> - {translateMode ? '群组开放，所有人可发送消息' : 'Group opens, everyone can send messages'}
+                      </p>
+                      <p>
+                        🔒 <strong>{closeTime}</strong> - {translateMode ? '群组关闭，仅管理员可发送消息' : 'Group closes, only admins can send messages'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

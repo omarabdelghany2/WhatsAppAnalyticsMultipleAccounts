@@ -281,6 +281,22 @@ function initializeDatabase() {
             )
         `);
 
+        // Create admin_only_schedule table
+        db.run(`
+            CREATE TABLE IF NOT EXISTS admin_only_schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                group_id TEXT NOT NULL,
+                enabled BOOLEAN DEFAULT 0,
+                open_time TEXT NOT NULL,
+                close_time TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, group_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
         // Add mentions column to scheduled_broadcasts table if it doesn't exist
         db.run(`
             ALTER TABLE scheduled_broadcasts ADD COLUMN mentions TEXT
@@ -1016,6 +1032,129 @@ app.delete('/api/welcome-settings/:groupId', authenticateToken, (req, res) => {
         res.json({
             success: true,
             message: 'Welcome message settings deleted successfully'
+        });
+    });
+});
+
+// ============================================
+// ADMIN-ONLY MODE SCHEDULE ENDPOINTS
+// ============================================
+
+// Get admin-only schedule settings for a group
+app.get('/api/admin-only-schedule/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+
+    console.log(`📥 Getting admin-only schedule for user ${userId}, group ${groupId}`);
+
+    db.get(`
+        SELECT * FROM admin_only_schedule
+        WHERE user_id = ? AND group_id = ?
+    `, [userId, groupId], (err, row) => {
+        if (err) {
+            console.error('Error fetching admin-only schedule:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        console.log(`📤 Admin-only schedule result:`, row);
+
+        res.json({
+            success: true,
+            settings: row || null
+        });
+    });
+});
+
+// Save or update admin-only schedule settings for a group
+app.post('/api/admin-only-schedule/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+    const { enabled, openTime, closeTime } = req.body;
+
+    console.log(`💾 Saving admin-only schedule: user=${userId}, group=${groupId}, enabled=${enabled}, open=${openTime}, close=${closeTime}`);
+
+    // Validation
+    if (typeof enabled !== 'boolean' && enabled !== 'true' && enabled !== 'false') {
+        return res.status(400).json({
+            success: false,
+            error: 'enabled must be a boolean'
+        });
+    }
+
+    if (!openTime || typeof openTime !== 'string') {
+        return res.status(400).json({
+            success: false,
+            error: 'openTime is required'
+        });
+    }
+
+    if (!closeTime || typeof closeTime !== 'string') {
+        return res.status(400).json({
+            success: false,
+            error: 'closeTime is required'
+        });
+    }
+
+    // Parse boolean values if they come as strings
+    const enabledBool = enabled === true || enabled === 'true';
+
+    // Insert or update
+    db.run(`
+        INSERT INTO admin_only_schedule (user_id, group_id, enabled, open_time, close_time, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, group_id) DO UPDATE SET
+            enabled = excluded.enabled,
+            open_time = excluded.open_time,
+            close_time = excluded.close_time,
+            updated_at = CURRENT_TIMESTAMP
+    `, [userId, groupId, enabledBool ? 1 : 0, openTime, closeTime], function(err) {
+        if (err) {
+            console.error('❌ Error saving admin-only schedule:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error: ' + err.message
+            });
+        }
+
+        console.log(`✅ Admin-only schedule saved successfully for user ${userId}, group ${groupId}, changes=${this.changes}`);
+
+        res.json({
+            success: true,
+            message: 'Admin-only schedule settings saved successfully'
+        });
+    });
+});
+
+// Delete admin-only schedule settings for a group
+app.delete('/api/admin-only-schedule/:groupId', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+    const { groupId } = req.params;
+
+    db.run(`
+        DELETE FROM admin_only_schedule
+        WHERE user_id = ? AND group_id = ?
+    `, [userId, groupId], function(err) {
+        if (err) {
+            console.error('Error deleting admin-only schedule:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Settings not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Admin-only schedule settings deleted successfully'
         });
     });
 });
@@ -4974,6 +5113,87 @@ schedule.scheduleJob('* * * * *', async () => {
 console.log('⏰ Scheduled broadcast checker initialized (runs every minute)');
 
 // ============================================
+// ADMIN-ONLY MODE SCHEDULER
+// ============================================
+
+// Function to check and apply admin-only mode schedules
+async function checkAndApplyAdminOnlySchedules() {
+    try {
+        // Get all enabled schedules from database
+        db.all(`
+            SELECT * FROM admin_only_schedule WHERE enabled = 1
+        `, async (err, schedules) => {
+            if (err) {
+                console.error('Error fetching admin-only schedules:', err);
+                return;
+            }
+
+            if (!schedules || schedules.length === 0) {
+                return;
+            }
+
+            // Get current time in HH:MM format
+            const now = new Date();
+            const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            for (const schedule of schedules) {
+                const userId = schedule.user_id;
+                const groupId = schedule.group_id;
+                const openTime = schedule.open_time;
+                const closeTime = schedule.close_time;
+
+                // Get user's WhatsApp client
+                const userClient = whatsappClients.get(userId);
+                if (!userClient || !userClientReady.get(userId)) {
+                    continue; // Skip if client not ready
+                }
+
+                try {
+                    const chat = await userClient.getChatById(groupId);
+                    if (!chat) {
+                        console.log(`⚠️  Chat not found for user ${userId}, group ${groupId}`);
+                        continue;
+                    }
+
+                    // Check if it's time to open (everyone can send)
+                    if (currentTime === openTime) {
+                        console.log(`🔓 Opening chat for user ${userId}, group ${groupId} at ${currentTime}`);
+                        await chat.setMessagesAdminsOnly(false);
+                        console.log(`✅ Chat opened - everyone can send messages`);
+                    }
+
+                    // Check if it's time to close (admins only)
+                    if (currentTime === closeTime) {
+                        console.log(`🔒 Closing chat for user ${userId}, group ${groupId} at ${currentTime}`);
+                        await chat.setMessagesAdminsOnly(true);
+                        console.log(`✅ Chat closed - only admins can send messages`);
+                    }
+                } catch (error) {
+                    console.error(`Error applying admin-only mode for user ${userId}, group ${groupId}:`, error);
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error in admin-only scheduler:', error);
+    }
+}
+
+// Start the scheduler - check every minute
+let adminOnlySchedulerInterval;
+
+function startAdminOnlyScheduler() {
+    // Check immediately on start
+    checkAndApplyAdminOnlySchedules();
+
+    // Then check every minute
+    adminOnlySchedulerInterval = setInterval(() => {
+        checkAndApplyAdminOnlySchedules();
+    }, 60 * 1000); // 60 seconds
+
+    console.log('⏰ Admin-only mode scheduler started (checks every minute)');
+}
+
+// ============================================
 // START SERVER
 // ============================================
 
@@ -4990,6 +5210,9 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  GET  /api/events/:groupId - Get events from specific group`);
     console.log(`  GET  /api/search?q=query - Search messages`);
     console.log(`  GET  /api/stats - Get statistics\n`);
+
+    // Start the admin-only mode scheduler
+    startAdminOnlyScheduler();
 
     // Multi-tenant mode: WhatsApp clients initialize per-user when they login
     console.log('✅ Server ready. WhatsApp clients will initialize per user.\n');

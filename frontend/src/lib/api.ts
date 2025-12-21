@@ -460,6 +460,31 @@ export const api = {
     });
     return response.json();
   },
+
+  // Admin-only schedule settings
+  async getAdminOnlySchedule(groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/admin-only-schedule/${groupId}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  async saveAdminOnlySchedule(groupId: string, enabled: boolean, openTime: string, closeTime: string) {
+    const response = await fetch(`${API_BASE_URL}/api/admin-only-schedule/${groupId}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ enabled, openTime, closeTime }),
+    });
+    return response.json();
+  },
+
+  async deleteAdminOnlySchedule(groupId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/admin-only-schedule/${groupId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
 };
 
 export class WSClient {

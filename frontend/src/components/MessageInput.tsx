@@ -92,14 +92,14 @@ export function MessageInput({ groupId, onMessageSent, replyingTo, onCancelReply
     setSelectedMentions(mentionIds);
     setMentionedNames(memberNames);
 
-    // Insert mentions into message using @[phone] format for better WhatsApp detection
-    // WhatsApp will match these with the Contact objects we send
-    const mentionText = memberNames.map((name, index) => `@${memberPhones[index]}`).join(' ');
-    const currentMessage = message.trim();
-    const newMessage = currentMessage ? `${currentMessage} ${mentionText}` : mentionText;
-    setMessage(newMessage);
+    // Silent/Compact Mention: Don't add phone numbers to message text
+    // Just add mentions to the array - WhatsApp will notify everyone
+    // If message is empty, add a default notification emoji
+    if (!message.trim()) {
+      setMessage('📢');
+    }
 
-    toast.success(`${memberNames.length} member(s) mentioned`);
+    toast.success(`${memberNames.length} member(s) will be mentioned silently`);
   };
 
   const handleSendMessage = async () => {
