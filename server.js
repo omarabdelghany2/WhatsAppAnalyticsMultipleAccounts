@@ -1159,6 +1159,53 @@ app.delete('/api/admin-only-schedule/:groupId', authenticateToken, (req, res) =>
     });
 });
 
+// Debug endpoint - list all admin-only schedules
+app.get('/api/debug/admin-only-schedules', authenticateToken, (req, res) => {
+    const userId = req.user.userId;
+
+    db.all(`
+        SELECT * FROM admin_only_schedule WHERE user_id = ?
+    `, [userId], (err, rows) => {
+        if (err) {
+            console.error('Error fetching all schedules:', err);
+            return res.status(500).json({
+                success: false,
+                error: 'Database error'
+            });
+        }
+
+        const now = new Date();
+        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        res.json({
+            success: true,
+            currentTime: currentTime,
+            schedules: rows,
+            clientReady: userClientReady.get(userId) || false,
+            hasClient: whatsappClients.has(userId)
+        });
+    });
+});
+
+// Debug endpoint - manually trigger scheduler check
+app.post('/api/debug/trigger-scheduler', authenticateToken, async (req, res) => {
+    console.log('🔧 Manual scheduler trigger requested');
+
+    try {
+        await checkAndApplyAdminOnlySchedules();
+        res.json({
+            success: true,
+            message: 'Scheduler triggered - check server logs for details'
+        });
+    } catch (error) {
+        console.error('Error triggering scheduler:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // ============================================
 // ADMIN VIEW USER DATA ENDPOINTS
 // ============================================
@@ -5119,22 +5166,27 @@ console.log('⏰ Scheduled broadcast checker initialized (runs every minute)');
 // Function to check and apply admin-only mode schedules
 async function checkAndApplyAdminOnlySchedules() {
     try {
+        // Get current time in HH:MM format
+        const now = new Date();
+        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        console.log(`⏰ [Admin-Only Scheduler] Checking at ${currentTime}...`);
+
         // Get all enabled schedules from database
         db.all(`
             SELECT * FROM admin_only_schedule WHERE enabled = 1
         `, async (err, schedules) => {
             if (err) {
-                console.error('Error fetching admin-only schedules:', err);
+                console.error('❌ [Admin-Only Scheduler] Error fetching schedules:', err);
                 return;
             }
 
             if (!schedules || schedules.length === 0) {
+                console.log(`ℹ️  [Admin-Only Scheduler] No enabled schedules found`);
                 return;
             }
 
-            // Get current time in HH:MM format
-            const now = new Date();
-            const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            console.log(`📋 [Admin-Only Scheduler] Found ${schedules.length} enabled schedule(s)`);
 
             for (const schedule of schedules) {
                 const userId = schedule.user_id;
@@ -5142,39 +5194,50 @@ async function checkAndApplyAdminOnlySchedules() {
                 const openTime = schedule.open_time;
                 const closeTime = schedule.close_time;
 
+                console.log(`  📌 Schedule for User ${userId}, Group ${groupId}:`);
+                console.log(`     Open: ${openTime}, Close: ${closeTime}, Current: ${currentTime}`);
+
                 // Get user's WhatsApp client
                 const userClient = whatsappClients.get(userId);
-                if (!userClient || !userClientReady.get(userId)) {
-                    continue; // Skip if client not ready
+                const clientReady = userClientReady.get(userId);
+
+                if (!userClient) {
+                    console.log(`  ⚠️  User ${userId} - WhatsApp client not found`);
+                    continue;
+                }
+
+                if (!clientReady) {
+                    console.log(`  ⚠️  User ${userId} - WhatsApp client not ready`);
+                    continue;
                 }
 
                 try {
                     const chat = await userClient.getChatById(groupId);
                     if (!chat) {
-                        console.log(`⚠️  Chat not found for user ${userId}, group ${groupId}`);
+                        console.log(`  ⚠️  Chat not found for user ${userId}, group ${groupId}`);
                         continue;
                     }
 
                     // Check if it's time to open (everyone can send)
                     if (currentTime === openTime) {
-                        console.log(`🔓 Opening chat for user ${userId}, group ${groupId} at ${currentTime}`);
+                        console.log(`  🔓 OPENING chat for user ${userId}, group ${groupId} at ${currentTime}`);
                         await chat.setMessagesAdminsOnly(false);
-                        console.log(`✅ Chat opened - everyone can send messages`);
+                        console.log(`  ✅ Chat opened - everyone can send messages`);
                     }
 
                     // Check if it's time to close (admins only)
                     if (currentTime === closeTime) {
-                        console.log(`🔒 Closing chat for user ${userId}, group ${groupId} at ${currentTime}`);
+                        console.log(`  🔒 CLOSING chat for user ${userId}, group ${groupId} at ${currentTime}`);
                         await chat.setMessagesAdminsOnly(true);
-                        console.log(`✅ Chat closed - only admins can send messages`);
+                        console.log(`  ✅ Chat closed - only admins can send messages`);
                     }
                 } catch (error) {
-                    console.error(`Error applying admin-only mode for user ${userId}, group ${groupId}:`, error);
+                    console.error(`  ❌ Error applying admin-only mode for user ${userId}, group ${groupId}:`, error);
                 }
             }
         });
     } catch (error) {
-        console.error('Error in admin-only scheduler:', error);
+        console.error('❌ [Admin-Only Scheduler] Error in scheduler:', error);
     }
 }
 
