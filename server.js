@@ -1175,11 +1175,13 @@ app.get('/api/debug/admin-only-schedules', authenticateToken, (req, res) => {
         }
 
         const now = new Date();
-        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const egyptTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Cairo' }));
+        const currentTime = `${String(egyptTime.getHours()).padStart(2, '0')}:${String(egyptTime.getMinutes()).padStart(2, '0')}`;
 
         res.json({
             success: true,
             currentTime: currentTime,
+            timezone: 'Africa/Cairo (Egypt)',
             schedules: rows,
             clientReady: userClientReady.get(userId) || false,
             hasClient: whatsappClients.has(userId)
@@ -5166,11 +5168,12 @@ console.log('⏰ Scheduled broadcast checker initialized (runs every minute)');
 // Function to check and apply admin-only mode schedules
 async function checkAndApplyAdminOnlySchedules() {
     try {
-        // Get current time in HH:MM format
+        // Get current time in Egypt timezone (UTC+2)
         const now = new Date();
-        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const egyptTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Cairo' }));
+        const currentTime = `${String(egyptTime.getHours()).padStart(2, '0')}:${String(egyptTime.getMinutes()).padStart(2, '0')}`;
 
-        console.log(`⏰ [Admin-Only Scheduler] Checking at ${currentTime}...`);
+        console.log(`⏰ [Admin-Only Scheduler] Checking at ${currentTime} (Egypt Time)...`);
 
         // Get all enabled schedules from database
         db.all(`
