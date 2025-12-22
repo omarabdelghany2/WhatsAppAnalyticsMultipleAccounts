@@ -4011,9 +4011,18 @@ function startMonitoringForUser(userId, userClient) {
 async function checkMessagesForUser(userId, userClient) {
     try {
         const userGroups = userMonitoredGroups.get(userId);
-        if (!userGroups || userGroups.size === 0) {
+
+        if (!userGroups) {
+            console.log(`⚠️  User ${userId} - No userGroups found in userMonitoredGroups Map`);
             return;
         }
+
+        if (userGroups.size === 0) {
+            console.log(`⚠️  User ${userId} - userGroups Map is empty (no monitored groups)`);
+            return;
+        }
+
+        console.log(`🔍 User ${userId} - Checking ${userGroups.size} monitored group(s)...`);
 
         for (const [groupId, groupInfo] of userGroups) {
             try {
