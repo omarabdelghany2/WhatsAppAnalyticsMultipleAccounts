@@ -2081,21 +2081,19 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
 
         console.log(`📢 Fetching channels for user ${userId}...`);
 
-        // Get all channels/newsletters
-        const channels = await userClient.getChats();
+        // Use the dedicated getChannels() method (from wwebjs docs)
+        const channels = await userClient.getChannels();
 
-        console.log(`🔍 DEBUG: Total chats for user ${userId}: ${channels.length}`);
+        console.log(`🔍 DEBUG: Got ${channels.length} channels from getChannels() for user ${userId}`);
 
-        // Filter channels using the isChannel property (from wwebjs docs)
-        const channelList = channels
-            .filter(chat => chat.isChannel)
-            .map(chat => ({
-                id: chat.id._serialized,
-                name: chat.name,
-                description: chat.description || '',
-                subscriberCount: chat.size || 0,
-                isNewsletter: true
-            }));
+        // Map to our format
+        const channelList = channels.map(chat => ({
+            id: chat.id._serialized,
+            name: chat.name,
+            description: chat.description || '',
+            subscriberCount: chat.size || 0,
+            isNewsletter: true
+        }));
 
         console.log(`✅ Found ${channelList.length} channel(s) for user ${userId}`);
 
@@ -2231,15 +2229,10 @@ app.post('/api/channels/add', authenticateToken, async (req, res) => {
             });
         }
 
-        // Search for the channel in user's WhatsApp
-        const chats = await userClient.getChats();
+        // Use the dedicated getChannels() method to get all user's channels
+        const allChannels = await userClient.getChannels();
 
-        console.log(`🔍 DEBUG: User ${userId} has ${chats.length} total chats`);
-
-        // Get all channels using the isChannel property (from wwebjs docs)
-        const allChannels = chats.filter(chat => chat.isChannel && chat.name);
-
-        console.log(`🔍 DEBUG: Found ${allChannels.length} channels for user ${userId}`);
+        console.log(`🔍 DEBUG: User ${userId} has ${allChannels.length} channels`);
 
         const channel = allChannels.find(chat =>
             chat.name.toLowerCase().includes(channelName.toLowerCase())
