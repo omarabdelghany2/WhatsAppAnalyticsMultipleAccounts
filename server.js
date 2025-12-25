@@ -2232,8 +2232,26 @@ app.post('/api/channels/add', authenticateToken, async (req, res) => {
         // Search for the channel in user's WhatsApp
         const chats = await userClient.getChats();
 
+        // DEBUG: Log all chat types to understand what properties exist
+        console.log(`🔍 DEBUG: User ${userId} has ${chats.length} total chats`);
+
+        // Log first few chats with their properties
+        const sampleChats = chats.slice(0, 5);
+        sampleChats.forEach((chat, idx) => {
+            console.log(`🔍 DEBUG Chat ${idx}:`, {
+                name: chat.name,
+                id: chat.id?._serialized,
+                isGroup: chat.isGroup,
+                isNewsletter: chat.isNewsletter,
+                type: typeof chat.isNewsletter,
+                allKeys: Object.keys(chat).filter(k => k.includes('news') || k.includes('channel') || k.includes('broadcast'))
+            });
+        });
+
         // Get all channels for better error messages
         const allChannels = chats.filter(chat => chat.isNewsletter && chat.name);
+
+        console.log(`🔍 DEBUG: Found ${allChannels.length} channels using isNewsletter filter`);
 
         const channel = allChannels.find(chat =>
             chat.name.toLowerCase().includes(channelName.toLowerCase())
