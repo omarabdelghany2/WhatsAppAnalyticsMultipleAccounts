@@ -2086,29 +2086,9 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
 
         console.log(`🔍 DEBUG: Total chats for user ${userId}: ${channels.length}`);
 
-        // Look for chats with @newsletter in their ID (this is how channels are identified)
-        const newsletterChats = channels.filter(chat =>
-            chat.id?._serialized?.includes('@newsletter')
-        );
-
-        console.log(`🔍 DEBUG: Found ${newsletterChats.length} chats with @newsletter in ID`);
-
-        // Log all newsletter chats
-        newsletterChats.forEach((chat, idx) => {
-            console.log(`🔍 NEWSLETTER Chat ${idx}:`, {
-                name: chat.name,
-                id: chat.id?._serialized,
-                isGroup: chat.isGroup,
-                isNewsletter: chat.isNewsletter
-            });
-        });
-
-        // Filter channels using either isNewsletter property OR @newsletter in ID
+        // Filter channels using the isChannel property (from wwebjs docs)
         const channelList = channels
-            .filter(chat =>
-                chat.isNewsletter ||
-                chat.id?._serialized?.includes('@newsletter')
-            )
+            .filter(chat => chat.isChannel)
             .map(chat => ({
                 id: chat.id._serialized,
                 name: chat.name,
@@ -2256,10 +2236,8 @@ app.post('/api/channels/add', authenticateToken, async (req, res) => {
 
         console.log(`🔍 DEBUG: User ${userId} has ${chats.length} total chats`);
 
-        // Get all channels (using @newsletter in ID or isNewsletter property)
-        const allChannels = chats.filter(chat =>
-            (chat.isNewsletter || chat.id?._serialized?.includes('@newsletter')) && chat.name
-        );
+        // Get all channels using the isChannel property (from wwebjs docs)
+        const allChannels = chats.filter(chat => chat.isChannel && chat.name);
 
         console.log(`🔍 DEBUG: Found ${allChannels.length} channels for user ${userId}`);
 
