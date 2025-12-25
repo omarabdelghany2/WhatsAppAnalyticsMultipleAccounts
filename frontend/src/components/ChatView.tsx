@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Languages, Reply } from "lucide-react";
+import { Languages, Reply, Heart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MessageInput } from "./MessageInput";
 
@@ -21,9 +21,10 @@ interface ChatViewProps {
   groupName: string;
   groupId: string;
   onMessageSent?: () => void;
+  onReactionClick?: (messageId: string) => void;
 }
 
-export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatViewProps) {
+export function ChatView({ messages, groupName, groupId, onMessageSent, onReactionClick }: ChatViewProps) {
   const [translatedMessages, setTranslatedMessages] = useState<Map<string, string>>(new Map());
   const [translatingMessages, setTranslatingMessages] = useState<Set<string>>(new Set());
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -149,6 +150,17 @@ export function ChatView({ messages, groupName, groupId, onMessageSent }: ChatVi
                     >
                       <Languages className={cn("h-4 w-4", isTranslating && "animate-pulse")} />
                     </Button>
+                    {onReactionClick && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("h-8 w-8 transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
+                        onClick={() => onReactionClick(message.id)}
+                        title="View reactions"
+                      >
+                        <Heart className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                   <div className="max-w-[70%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
                     {/* Show replied-to message if exists */}

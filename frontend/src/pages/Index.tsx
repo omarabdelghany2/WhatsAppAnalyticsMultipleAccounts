@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { GroupList } from "@/components/GroupList";
+import { ChannelList } from "@/components/ChannelList";
 import { ChatView } from "@/components/ChatView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
+import { ReactionsDialog } from "@/components/ReactionsDialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Languages, LogOut, Power, ShieldCheck, Eye, Users } from "lucide-react";
-import { api, wsClient, Message, Event } from "@/lib/api";
+import { Languages, LogOut, Power, ShieldCheck, Eye, Users, Radio } from "lucide-react";
+import { api, wsClient, Message, Event, Channel, ChannelMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -18,16 +20,21 @@ import { Badge } from "@/components/ui/badge";
 const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3000' : '';
 
 const Index = () => {
+  const [viewMode, setViewMode] = useState<'groups' | 'channels'>('groups');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [translateMode, setTranslateMode] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [channelMessages, setChannelMessages] = useState<ChannelMessage[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [logoutType, setLogoutType] = useState<'account' | 'whatsapp'>('account');
   const [viewingUserId, setViewingUserId] = useState<number | null>(null);
   const [viewingUserInfo, setViewingUserInfo] = useState<{username: string, email: string} | null>(null);
-  const { toast } = useToast();
+  const [showReactionsDialog, setShowReactionsDialog] = useState(false);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const { toast} = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { isAdmin, user: currentUser, isLoading: authLoading } = useAuth();
@@ -107,6 +114,26 @@ const Index = () => {
     queryFn: isViewingAsAdmin ? () => api.viewUserStats(targetUserId) : api.getStats,
     refetchInterval: 60000, // Refetch every minute
     enabled: !!groupsData?.groups?.length,
+  });
+
+  // Fetch channels
+  const { data: channelsData, isLoading: channelsLoading } = useQuery({
+    queryKey: ['channels', targetUserId],
+    queryFn: api.getChannels,
+    refetchInterval: 60000, // Refetch every minute
+    enabled: targetUserId > 0 && viewMode === 'channels',
+  });
+
+  // Fetch messages from selected channel
+  const { data: selectedChannelMessagesData, isLoading: channelMessagesLoading } = useQuery({
+    queryKey: ['channel-messages', selectedChannelId],
+    queryFn: () => {
+      if (selectedChannelId) {
+        return api.getChannelMessages(selectedChannelId, 100);
+      }
+      return Promise.resolve({ success: true, messages: [], count: 0 });
+    },
+    enabled: !!selectedChannelId && viewMode === 'channels',
   });
 
   // Check WhatsApp connection status periodically (skip if admin - even if not viewing a user yet)
@@ -277,6 +304,32 @@ const Index = () => {
     setTranslateMode(!translateMode);
   };
 
+  const handleViewModeChange = (mode: 'groups' | 'channels') => {
+    setViewMode(mode);
+    // Clear selections when switching modes
+    setSelectedGroupId(null);
+    setSelectedChannelId(null);
+    setMessages([]);
+    setChannelMessages([]);
+  };
+
+  const handleChannelSelect = (channelId: string) => {
+    setSelectedChannelId(channelId);
+    setSelectedGroupId(null); // Clear group selection
+  };
+
+  const handleMessageReactionClick = (messageId: string) => {
+    setSelectedMessageId(messageId);
+    setShowReactionsDialog(true);
+  };
+
+  // Update channel messages when data changes
+  useEffect(() => {
+    if (selectedChannelMessagesData?.success && selectedChannelMessagesData?.messages) {
+      setChannelMessages(selectedChannelMessagesData.messages);
+    }
+  }, [selectedChannelMessagesData]);
+
   const handleAddGroup = async (name: string) => {
     if (isViewingAsAdmin) {
       toast({
@@ -423,26 +476,45 @@ const Index = () => {
   const selectedGroupMessages = messages;
 
   // Sort messages oldest first (ascending by timestamp)
-  const sortedMessages = [...selectedGroupMessages].sort((a, b) =>
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
+  const sortedMessages = viewMode === 'groups'
+    ? [...selectedGroupMessages].sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      )
+    : [...channelMessages].sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
 
   // Transform messages to frontend format
-  const transformedMessages = sortedMessages.map((msg) => ({
-    id: String(msg.id || ''),
-    sender: String(msg.sender || 'Unknown'),
-    content: String(msg.message || ''),
-    timestamp: new Date(msg.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    }),
-    isOwn: false, // We don't track which messages are from the current user
-  }));
+  const transformedMessages = viewMode === 'groups'
+    ? sortedMessages.map((msg) => ({
+        id: String(msg.id || ''),
+        sender: String(msg.sender || 'Unknown'),
+        content: String(msg.message || ''),
+        timestamp: new Date(msg.timestamp).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        isOwn: false, // We don't track which messages are from the current user
+      }))
+    : sortedMessages.map((msg) => ({
+        id: String(msg.id || ''),
+        sender: String((msg as any).channelName || 'Channel'),
+        content: String(msg.content || ''),
+        timestamp: new Date(msg.timestamp).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        isOwn: false,
+      }));
 
-  // Get selected group name
-  const selectedGroupName = selectedGroupId
-    ? transformedGroups.find((g) => g.id === selectedGroupId)?.name || ""
-    : "All Groups";
+  // Get selected group or channel name
+  const selectedGroupName = viewMode === 'groups'
+    ? (selectedGroupId
+        ? transformedGroups.find((g) => g.id === selectedGroupId)?.name || ""
+        : "All Groups")
+    : (selectedChannelId
+        ? channelsData?.channels?.find((c: Channel) => c.id === selectedChannelId)?.name || ""
+        : "Select a Channel");
 
   // Calculate analytics
   const selectedGroupStats = statsData?.stats?.groups?.find(
@@ -501,6 +573,29 @@ const Index = () => {
           <h1 className="text-xl font-bold text-foreground">
             {translateMode ? "WhatsApp 分析" : "WhatsApp Analytics"}
           </h1>
+
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-1 p-1 bg-muted rounded-lg">
+            <Button
+              variant={viewMode === 'groups' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => handleViewModeChange('groups')}
+              className="gap-2"
+            >
+              <Users className="h-4 w-4" />
+              {translateMode ? "群组" : "Groups"}
+            </Button>
+            <Button
+              variant={viewMode === 'channels' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => handleViewModeChange('channels')}
+              className="gap-2"
+            >
+              <Radio className="h-4 w-4" />
+              {translateMode ? "频道" : "Channels"}
+            </Button>
+          </div>
+
           {isViewingAsAdmin && viewingUserInfo && (
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="gap-1">
@@ -573,14 +668,23 @@ const Index = () => {
       </header>
       <div className="flex-1 grid grid-cols-12 overflow-hidden">
         <div className="col-span-3 h-full">
-          <GroupList
-            groups={transformedGroups}
-            selectedGroupId={selectedGroupId || ""}
-            onSelectGroup={setSelectedGroupId}
-            onAddGroup={handleAddGroup}
-            onDeleteGroup={handleDeleteGroup}
-            translateMode={translateMode}
-          />
+          {viewMode === 'groups' ? (
+            <GroupList
+              groups={transformedGroups}
+              selectedGroupId={selectedGroupId || ""}
+              onSelectGroup={setSelectedGroupId}
+              onAddGroup={handleAddGroup}
+              onDeleteGroup={handleDeleteGroup}
+              translateMode={translateMode}
+            />
+          ) : (
+            <ChannelList
+              channels={channelsData?.channels || []}
+              selectedChannelId={selectedChannelId || ""}
+              onSelectChannel={handleChannelSelect}
+              translateMode={translateMode}
+            />
+          )}
         </div>
         <div className="col-span-6 h-full">
           <ChatView
@@ -591,6 +695,7 @@ const Index = () => {
               refetchMessages();
               refetchAllMessages();
             }}
+            onReactionClick={handleMessageReactionClick}
           />
         </div>
         <div className="col-span-3 h-full">
@@ -666,6 +771,13 @@ const Index = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reactions Dialog */}
+      <ReactionsDialog
+        open={showReactionsDialog}
+        onOpenChange={setShowReactionsDialog}
+        messageId={selectedMessageId}
+      />
     </div>
   );
 };
