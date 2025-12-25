@@ -2132,7 +2132,7 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
         // Get the channel chat
         const chat = await userClient.getChatById(channelId);
 
-        if (!chat.isNewsletter) {
+        if (!chat.isChannel) {
             return res.status(400).json({
                 success: false,
                 error: 'Chat is not a channel'
@@ -2149,7 +2149,19 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     // Determine message content
                     let content = msg.body || '';
                     let mediaType = 'text';
+                    let pollData = null;
+                    let reactions = [];
 
+                    // Get reactions if available
+                    if (msg.hasReaction) {
+                        try {
+                            reactions = await msg.getReactions();
+                        } catch (err) {
+                            console.error('Error getting reactions:', err);
+                        }
+                    }
+
+                    // Process different message types
                     if (msg.type === 'image') {
                         mediaType = 'image';
                         content = content || '[Image]';
@@ -2161,7 +2173,26 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                         content = content || '[Document]';
                     } else if (msg.type === 'poll' || msg.type === 'poll_creation') {
                         mediaType = 'poll';
-                        content = msg.body || '[Poll]';
+
+                        // Get poll data
+                        if (msg.poll) {
+                            pollData = {
+                                pollName: msg.poll.pollName || msg.body,
+                                pollOptions: msg.poll.pollOptions || [],
+                                votes: []
+                            };
+
+                            // Get poll votes
+                            try {
+                                pollData.votes = await msg.getPollVotes();
+                            } catch (err) {
+                                console.error('Error getting poll votes:', err);
+                            }
+
+                            content = pollData.pollName || '[Poll]';
+                        } else {
+                            content = msg.body || '[Poll]';
+                        }
                     }
 
                     return {
@@ -2172,7 +2203,9 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                         mediaType: mediaType,
                         timestamp: msg.timestamp * 1000,
                         hasMedia: msg.hasMedia,
-                        forwardingScore: msg.forwardingScore || 0
+                        forwardingScore: msg.forwardingScore || 0,
+                        reactions: reactions,
+                        pollData: pollData
                     };
                 } catch (error) {
                     console.error('Error processing channel message:', error);
