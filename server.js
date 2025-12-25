@@ -2084,6 +2084,27 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
         // Get all channels/newsletters
         const channels = await userClient.getChats();
 
+        console.log(`🔍 DEBUG: Total chats for user ${userId}: ${channels.length}`);
+
+        // Log first 10 chats to see their structure
+        const sampleChats = channels.slice(0, 10);
+        sampleChats.forEach((chat, idx) => {
+            console.log(`🔍 DEBUG Chat ${idx}:`, {
+                name: chat.name,
+                id: chat.id?._serialized?.substring(0, 30),
+                isGroup: chat.isGroup,
+                isNewsletter: chat.isNewsletter,
+                type: typeof chat.isNewsletter,
+                // Check all properties that might indicate it's a channel
+                allKeys: Object.keys(chat).filter(k =>
+                    k.toLowerCase().includes('news') ||
+                    k.toLowerCase().includes('channel') ||
+                    k.toLowerCase().includes('broadcast') ||
+                    k.toLowerCase().includes('newsletter')
+                )
+            });
+        });
+
         // Filter only newsletters/channels
         const channelList = channels
             .filter(chat => chat.isNewsletter)
@@ -2095,7 +2116,7 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
                 isNewsletter: true
             }));
 
-        console.log(`✅ Found ${channelList.length} channel(s) for user ${userId}`);
+        console.log(`✅ Found ${channelList.length} channel(s) using isNewsletter filter for user ${userId}`);
 
         res.json({
             success: true,
