@@ -2146,6 +2146,15 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
         const processedMessages = await Promise.all(
             messages.map(async (msg) => {
                 try {
+                    // Log message structure to understand what's available
+                    console.log(`📝 DEBUG Message ${msg.id._serialized} properties:`, {
+                        type: msg.type,
+                        hasReaction: msg.hasReaction,
+                        hasMedia: msg.hasMedia,
+                        hasPoll: !!msg.poll,
+                        availableMethods: Object.getOwnPropertyNames(Object.getPrototypeOf(msg)).filter(m => m.startsWith('get'))
+                    });
+
                     // Determine message content
                     let content = msg.body || '';
                     let mediaType = 'text';
@@ -2156,15 +2165,19 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     if (msg.hasReaction) {
                         try {
                             const reactionsRaw = await msg.getReactions();
-                            console.log(`🔍 DEBUG Reactions for message ${msg.id._serialized}:`, JSON.stringify(reactionsRaw, null, 2));
+                            console.log(`🔍 DEBUG Reactions raw data:`, JSON.stringify(reactionsRaw, null, 2));
 
-                            // Process reactions properly based on ReactionList structure
-                            // ReactionList has: id (emoji), aggregateEmoji, hasReactionByMe, senders (Array of Reaction)
-                            reactions = reactionsRaw.map(reactionList => ({
-                                emoji: reactionList.id || reactionList.aggregateEmoji,
-                                count: reactionList.senders ? reactionList.senders.length : 0,
-                                senders: reactionList.senders || []
-                            }));
+                            // Add defensive check for undefined/null
+                            if (reactionsRaw && Array.isArray(reactionsRaw)) {
+                                // Process reactions properly based on ReactionList structure
+                                reactions = reactionsRaw.map(reactionList => ({
+                                    emoji: reactionList.id || reactionList.aggregateEmoji,
+                                    count: reactionList.senders ? reactionList.senders.length : 0,
+                                    senders: reactionList.senders || []
+                                }));
+                            } else {
+                                console.log('⚠️  Reactions returned:', reactionsRaw);
+                            }
                         } catch (err) {
                             console.error('Error getting reactions:', err);
                         }
@@ -2199,10 +2212,18 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                             // Get poll votes
                             try {
                                 const votesRaw = await msg.getPollVotes();
-                                console.log(`🗳️  DEBUG Poll votes for message ${msg.id._serialized}:`, JSON.stringify(votesRaw, null, 2));
-                                pollData.votes = votesRaw;
+                                console.log(`🗳️  DEBUG Poll votes raw:`, JSON.stringify(votesRaw, null, 2));
+
+                                // Add defensive check
+                                if (votesRaw && Array.isArray(votesRaw)) {
+                                    pollData.votes = votesRaw;
+                                } else {
+                                    console.log('⚠️  Poll votes returned:', votesRaw);
+                                    pollData.votes = [];
+                                }
                             } catch (err) {
                                 console.error('Error getting poll votes:', err);
+                                pollData.votes = [];
                             }
 
                             content = pollData.pollName || '[Poll]';
@@ -2381,8 +2402,26 @@ app.get('/api/messages/:messageId/reactions', authenticateToken, async (req, res
             });
         }
 
+        console.log(`📝 DEBUG Message object properties:`, {
+            hasReaction: msg.hasReaction,
+            type: msg.type,
+            availableMethods: Object.getOwnPropertyNames(Object.getPrototypeOf(msg)).filter(m => m.startsWith('get'))
+        });
+
         // Get reactions
         const reactions = await msg.getReactions();
+        console.log(`🔍 DEBUG Reactions raw:`, reactions);
+
+        // Add defensive check for undefined/null
+        if (!reactions || !Array.isArray(reactions)) {
+            console.log('⚠️  No reactions or reactions is not an array:', reactions);
+            return res.json({
+                success: true,
+                messageId: messageId,
+                totalReactions: 0,
+                reactions: []
+            });
+        }
 
         // Process reactions to include name and phone
         const processedReactions = await Promise.all(
