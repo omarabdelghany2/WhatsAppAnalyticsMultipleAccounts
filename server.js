@@ -2146,42 +2146,11 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
         const processedMessages = await Promise.all(
             messages.map(async (msg) => {
                 try {
-                    // Log message structure to understand what's available
-                    console.log(`📝 DEBUG Message ${msg.id._serialized} properties:`, {
-                        type: msg.type,
-                        hasReaction: msg.hasReaction,
-                        hasMedia: msg.hasMedia,
-                        hasPoll: !!msg.poll,
-                        availableMethods: Object.getOwnPropertyNames(Object.getPrototypeOf(msg)).filter(m => m.startsWith('get'))
-                    });
-
                     // Determine message content
                     let content = msg.body || '';
                     let mediaType = 'text';
                     let pollData = null;
-                    let reactions = [];
-
-                    // Get reactions if available
-                    if (msg.hasReaction) {
-                        try {
-                            const reactionsRaw = await msg.getReactions();
-                            console.log(`🔍 DEBUG Reactions raw data:`, JSON.stringify(reactionsRaw, null, 2));
-
-                            // Add defensive check for undefined/null
-                            if (reactionsRaw && Array.isArray(reactionsRaw)) {
-                                // Process reactions properly based on ReactionList structure
-                                reactions = reactionsRaw.map(reactionList => ({
-                                    emoji: reactionList.id || reactionList.aggregateEmoji,
-                                    count: reactionList.senders ? reactionList.senders.length : 0,
-                                    senders: reactionList.senders || []
-                                }));
-                            } else {
-                                console.log('⚠️  Reactions returned:', reactionsRaw);
-                            }
-                        } catch (err) {
-                            console.error('Error getting reactions:', err);
-                        }
-                    }
+                    let reactions = []; // Reactions don't work for channel messages (return undefined)
 
                     // Process different message types
                     if (msg.type === 'image') {
@@ -2196,38 +2165,53 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     } else if (msg.type === 'poll' || msg.type === 'poll_creation') {
                         mediaType = 'poll';
 
-                        // Get poll data
-                        if (msg.poll) {
-                            console.log(`📊 DEBUG Poll data for message ${msg.id._serialized}:`, JSON.stringify({
-                                pollName: msg.poll.pollName,
-                                pollOptions: msg.poll.pollOptions
-                            }, null, 2));
+                        console.log(`📊 Processing poll message ${msg.id._serialized}, type: ${msg.type}`);
 
+                        // Try to get poll votes directly (msg.poll doesn't exist for channel polls)
+                        try {
+                            const votesRaw = await msg.getPollVotes();
+                            console.log(`🗳️  DEBUG Poll votes raw:`, JSON.stringify(votesRaw, null, 2));
+
+                            if (votesRaw && Array.isArray(votesRaw) && votesRaw.length > 0) {
+                                // Analyze votes to extract poll structure
+                                // PollVote has: voter, interractedAtTs, parentMessage, parentMsgKey
+                                const firstVote = votesRaw[0];
+                                console.log(`🔍 First vote structure:`, JSON.stringify(firstVote, null, 2));
+
+                                // Try to get poll options from parent message
+                                if (firstVote.parentMessage && firstVote.parentMessage.poll) {
+                                    pollData = {
+                                        pollName: firstVote.parentMessage.poll.pollName || msg.body || '[Poll]',
+                                        pollOptions: firstVote.parentMessage.poll.pollOptions || [],
+                                        votes: votesRaw
+                                    };
+                                    content = pollData.pollName;
+                                } else {
+                                    // Fallback if parent message doesn't have poll data
+                                    pollData = {
+                                        pollName: msg.body || '[Poll]',
+                                        pollOptions: [],
+                                        votes: votesRaw
+                                    };
+                                    content = msg.body || '[Poll]';
+                                }
+                            } else {
+                                console.log('⚠️  No poll votes found or votes is not an array:', votesRaw);
+                                // Poll with no votes yet
+                                pollData = {
+                                    pollName: msg.body || '[Poll]',
+                                    pollOptions: [],
+                                    votes: []
+                                };
+                                content = msg.body || '[Poll]';
+                            }
+                        } catch (err) {
+                            console.error('Error getting poll votes:', err);
                             pollData = {
-                                pollName: msg.poll.pollName || msg.body,
-                                pollOptions: msg.poll.pollOptions || [],
+                                pollName: msg.body || '[Poll]',
+                                pollOptions: [],
                                 votes: []
                             };
-
-                            // Get poll votes
-                            try {
-                                const votesRaw = await msg.getPollVotes();
-                                console.log(`🗳️  DEBUG Poll votes raw:`, JSON.stringify(votesRaw, null, 2));
-
-                                // Add defensive check
-                                if (votesRaw && Array.isArray(votesRaw)) {
-                                    pollData.votes = votesRaw;
-                                } else {
-                                    console.log('⚠️  Poll votes returned:', votesRaw);
-                                    pollData.votes = [];
-                                }
-                            } catch (err) {
-                                console.error('Error getting poll votes:', err);
-                                pollData.votes = [];
-                            }
-
-                            content = pollData.pollName || '[Poll]';
-                        } else {
                             content = msg.body || '[Poll]';
                         }
                     }

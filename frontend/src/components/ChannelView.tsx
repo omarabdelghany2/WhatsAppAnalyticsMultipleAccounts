@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
-import { Heart, Image as ImageIcon, Video, FileText } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Image as ImageIcon, Video, FileText } from "lucide-react";
 import { PollMessage } from "./PollMessage";
 
 interface ChannelMessage {
@@ -29,10 +26,9 @@ interface ChannelViewProps {
   onReactionClick?: (messageId: string) => void;
 }
 
-export function ChannelView({ messages, channelName, channelId, onReactionClick }: ChannelViewProps) {
+export function ChannelView({ messages, channelName, channelId }: ChannelViewProps) {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
 
   // Check if user is at bottom
   const checkIfAtBottom = () => {
@@ -101,30 +97,11 @@ export function ChannelView({ messages, channelName, channelId, onReactionClick 
               </div>
             ) : (
               messages.map((message) => {
-                const isHovered = hoveredMessageId === message.id;
-                const hasReactions = message.reactions && message.reactions.length > 0;
-
                 return (
                   <div
                     key={message.id}
                     className="flex gap-2 items-start justify-start"
-                    onMouseEnter={() => setHoveredMessageId(message.id)}
-                    onMouseLeave={() => setHoveredMessageId(null)}
                   >
-                    {/* Reaction button */}
-                    <div className="flex gap-1">
-                      {onReactionClick && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={cn("h-8 w-8 transition-opacity", isHovered || hasReactions ? "opacity-100" : "opacity-0")}
-                          onClick={() => onReactionClick(message.id)}
-                          title="View reactions"
-                        >
-                          <Heart className={cn("h-4 w-4", hasReactions && "fill-red-500 text-red-500")} />
-                        </Button>
-                      )}
-                    </div>
 
                     {/* Message content */}
                     <div className="max-w-[80%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
@@ -146,22 +123,6 @@ export function ChannelView({ messages, channelName, channelId, onReactionClick 
                           <p className="text-xs italic">Forwarded {message.forwardingScore}x</p>
                         )}
                       </div>
-
-                      {/* Reactions summary */}
-                      {hasReactions && (
-                        <div className="mt-2 pt-2 border-t border-current/20">
-                          <div className="flex flex-wrap gap-1">
-                            {message.reactions?.slice(0, 5).map((reaction: any, idx: number) => (
-                              <span key={idx} className="text-xs bg-white/10 px-2 py-0.5 rounded-full">
-                                {reaction}
-                              </span>
-                            ))}
-                            {message.reactions && message.reactions.length > 5 && (
-                              <span className="text-xs opacity-60">+{message.reactions.length - 5}</span>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
