@@ -4,6 +4,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { GroupList } from "@/components/GroupList";
 import { ChannelList } from "@/components/ChannelList";
 import { ChatView } from "@/components/ChatView";
+import { ChannelView } from "@/components/ChannelView";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { ReactionsDialog } from "@/components/ReactionsDialog";
 import { Button } from "@/components/ui/button";
@@ -766,16 +767,27 @@ const Index = () => {
           )}
         </div>
         <div className="col-span-6 h-full">
-          <ChatView
-            messages={transformedMessages}
-            groupName={selectedGroupName}
-            groupId={selectedGroupId || ""}
-            onMessageSent={() => {
-              refetchMessages();
-              refetchAllMessages();
-            }}
-            onReactionClick={handleMessageReactionClick}
-          />
+          {viewMode === 'channels' ? (
+            <ChannelView
+              messages={channelMessages}
+              channelName={selectedChannelId
+                ? channelsData?.channels?.find((c: Channel) => c.id === selectedChannelId)?.name || "Select a Channel"
+                : "Select a Channel"}
+              channelId={selectedChannelId || ""}
+              onReactionClick={handleMessageReactionClick}
+            />
+          ) : (
+            <ChatView
+              messages={transformedMessages}
+              groupName={selectedGroupName}
+              groupId={selectedGroupId || ""}
+              onMessageSent={() => {
+                refetchMessages();
+                refetchAllMessages();
+              }}
+              onReactionClick={handleMessageReactionClick}
+            />
+          )}
         </div>
         <div className="col-span-3 h-full">
           <AnalyticsPanel
