@@ -2155,7 +2155,16 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     // Get reactions if available
                     if (msg.hasReaction) {
                         try {
-                            reactions = await msg.getReactions();
+                            const reactionsRaw = await msg.getReactions();
+                            console.log(`🔍 DEBUG Reactions for message ${msg.id._serialized}:`, JSON.stringify(reactionsRaw, null, 2));
+
+                            // Process reactions properly based on ReactionList structure
+                            // ReactionList has: id (emoji), aggregateEmoji, hasReactionByMe, senders (Array of Reaction)
+                            reactions = reactionsRaw.map(reactionList => ({
+                                emoji: reactionList.id || reactionList.aggregateEmoji,
+                                count: reactionList.senders ? reactionList.senders.length : 0,
+                                senders: reactionList.senders || []
+                            }));
                         } catch (err) {
                             console.error('Error getting reactions:', err);
                         }
@@ -2176,6 +2185,11 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
 
                         // Get poll data
                         if (msg.poll) {
+                            console.log(`📊 DEBUG Poll data for message ${msg.id._serialized}:`, JSON.stringify({
+                                pollName: msg.poll.pollName,
+                                pollOptions: msg.poll.pollOptions
+                            }, null, 2));
+
                             pollData = {
                                 pollName: msg.poll.pollName || msg.body,
                                 pollOptions: msg.poll.pollOptions || [],
@@ -2184,7 +2198,9 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
 
                             // Get poll votes
                             try {
-                                pollData.votes = await msg.getPollVotes();
+                                const votesRaw = await msg.getPollVotes();
+                                console.log(`🗳️  DEBUG Poll votes for message ${msg.id._serialized}:`, JSON.stringify(votesRaw, null, 2));
+                                pollData.votes = votesRaw;
                             } catch (err) {
                                 console.error('Error getting poll votes:', err);
                             }
