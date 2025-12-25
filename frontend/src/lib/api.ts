@@ -317,6 +317,23 @@ export const api = {
     return response.json();
   },
 
+  async addChannel(name: string) {
+    const response = await fetch(`${API_BASE_URL}/api/channels/add`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return response.json();
+  },
+
+  async deleteChannel(channelId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/channels/${channelId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
   async getGroupMembers(groupId: string) {
     const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}/members`, {
       headers: getAuthHeaders(),

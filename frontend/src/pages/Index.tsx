@@ -397,6 +397,71 @@ const Index = () => {
     }
   };
 
+  const handleAddChannel = async (name: string) => {
+    if (isViewingAsAdmin) {
+      toast({
+        title: "Read-only Mode",
+        description: "You cannot add channels while viewing as admin",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const result = await api.addChannel(name);
+
+      toast({
+        title: "Channel added successfully",
+        description: `Now monitoring "${result.channel.name}"`,
+      });
+
+      // Refetch channels to update the list
+      queryClient.invalidateQueries({ queryKey: ['channels'] });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to add channel';
+      toast({
+        title: "Failed to add channel",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteChannel = async (channelId: string) => {
+    if (isViewingAsAdmin) {
+      toast({
+        title: "Read-only Mode",
+        description: "You cannot delete channels while viewing as admin",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await api.deleteChannel(channelId);
+
+      toast({
+        title: "Channel removed",
+        description: "Stopped monitoring this channel",
+      });
+
+      // If we deleted the currently selected channel, clear the selection
+      if (selectedChannelId === channelId) {
+        setSelectedChannelId(null);
+      }
+
+      // Refetch channels to update the list
+      queryClient.invalidateQueries({ queryKey: ['channels'] });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to remove channel';
+      toast({
+        title: "Failed to remove channel",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleAccountLogout = async () => {
     try {
       // Only clear JWT token - WhatsApp stays connected
@@ -682,6 +747,8 @@ const Index = () => {
               channels={channelsData?.channels || []}
               selectedChannelId={selectedChannelId || ""}
               onSelectChannel={handleChannelSelect}
+              onAddChannel={handleAddChannel}
+              onDeleteChannel={handleDeleteChannel}
               translateMode={translateMode}
             />
           )}

@@ -2203,6 +2203,96 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
     }
 });
 
+// POST /api/channels/add - Search for and "add" a channel by name
+app.post('/api/channels/add', authenticateToken, async (req, res) => {
+    try {
+        const { name } = req.body;
+        const userId = req.user.userId;
+
+        if (!name || typeof name !== 'string' || name.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                error: 'Channel name is required'
+            });
+        }
+
+        const channelName = name.trim();
+
+        // Check if user's WhatsApp client is ready
+        const userClient = whatsappClients.get(userId);
+        const isReady = userClientReady.get(userId);
+
+        if (!isReady || !userClient) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client is not ready. Please connect WhatsApp first.'
+            });
+        }
+
+        // Search for the channel in user's WhatsApp
+        const chats = await userClient.getChats();
+        const channel = chats.find(chat =>
+            chat.isNewsletter && chat.name && chat.name.toLowerCase().includes(channelName.toLowerCase())
+        );
+
+        if (!channel) {
+            return res.status(404).json({
+                success: false,
+                error: `Channel "${channelName}" not found in your subscribed channels`
+            });
+        }
+
+        // Return the channel info (no need to store in database, just return for selection)
+        const channelInfo = {
+            id: channel.id._serialized,
+            name: channel.name,
+            description: channel.description || '',
+            subscriberCount: channel.size || 0,
+            isNewsletter: true
+        };
+
+        console.log(`✅ User ${userId} found channel: "${channel.name}"`);
+
+        res.json({
+            success: true,
+            message: 'Channel found successfully',
+            channel: channelInfo
+        });
+
+    } catch (error) {
+        console.error('Error searching for channel:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to search for channel: ' + error.message
+        });
+    }
+});
+
+// DELETE /api/channels/:channelId - "Remove" a channel (just for UI consistency)
+app.delete('/api/channels/:channelId', authenticateToken, async (req, res) => {
+    try {
+        const { channelId } = req.params;
+        const userId = req.user.userId;
+
+        // Since channels aren't stored, just return success
+        // This is mainly for UI consistency with groups
+        console.log(`🗑️  User ${userId} stopped viewing channel: ${channelId}`);
+
+        res.json({
+            success: true,
+            message: 'Channel removed from view',
+            channelId: channelId
+        });
+
+    } catch (error) {
+        console.error('Error removing channel:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to remove channel: ' + error.message
+        });
+    }
+});
+
 // Get reactions for a specific message (works for both groups and channels)
 app.get('/api/messages/:messageId/reactions', authenticateToken, async (req, res) => {
     try {
