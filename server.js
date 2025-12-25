@@ -2231,14 +2231,28 @@ app.post('/api/channels/add', authenticateToken, async (req, res) => {
 
         // Search for the channel in user's WhatsApp
         const chats = await userClient.getChats();
-        const channel = chats.find(chat =>
-            chat.isNewsletter && chat.name && chat.name.toLowerCase().includes(channelName.toLowerCase())
+
+        // Get all channels for better error messages
+        const allChannels = chats.filter(chat => chat.isNewsletter && chat.name);
+
+        const channel = allChannels.find(chat =>
+            chat.name.toLowerCase().includes(channelName.toLowerCase())
         );
 
         if (!channel) {
+            // Return helpful error with list of available channels
+            const availableChannels = allChannels.map(ch => ({
+                name: ch.name,
+                description: ch.description || '',
+                subscriberCount: ch.size || 0
+            }));
+
+            console.log(`❌ User ${userId} searched for channel "${channelName}" but not found. Available channels:`, availableChannels.map(ch => ch.name));
+
             return res.status(404).json({
                 success: false,
-                error: `Channel "${channelName}" not found in your subscribed channels`
+                error: `Channel "${channelName}" not found in your subscribed channels`,
+                availableChannels: availableChannels.slice(0, 10) // Return up to 10 channels as suggestions
             });
         }
 

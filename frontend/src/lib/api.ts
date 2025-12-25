@@ -323,7 +323,14 @@ export const api = {
       headers: getAuthHeaders(),
       body: JSON.stringify({ name }),
     });
-    return response.json();
+    const data = await response.json();
+
+    // If response is not ok, throw the error data so it can be caught
+    if (!response.ok || !data.success) {
+      throw data;
+    }
+
+    return data;
   },
 
   async deleteChannel(channelId: string) {

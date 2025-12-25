@@ -417,11 +417,23 @@ const Index = () => {
 
       // Refetch channels to update the list
       queryClient.invalidateQueries({ queryKey: ['channels'] });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to add channel';
+    } catch (error: any) {
+      let errorMessage = 'Failed to add channel';
+      let availableChannelsList = '';
+
+      if (error?.availableChannels && error.availableChannels.length > 0) {
+        errorMessage = error.error || errorMessage;
+        availableChannelsList = '\n\nAvailable channels:\n' +
+          error.availableChannels.map((ch: any) => `• ${ch.name}`).join('\n');
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (error?.error) {
+        errorMessage = error.error;
+      }
+
       toast({
         title: "Failed to add channel",
-        description: errorMessage,
+        description: errorMessage + availableChannelsList,
         variant: "destructive",
       });
     }
