@@ -2086,28 +2086,29 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
 
         console.log(`🔍 DEBUG: Total chats for user ${userId}: ${channels.length}`);
 
-        // Log first 10 chats to see their structure
-        const sampleChats = channels.slice(0, 10);
-        sampleChats.forEach((chat, idx) => {
-            console.log(`🔍 DEBUG Chat ${idx}:`, {
+        // Look for chats with @newsletter in their ID (this is how channels are identified)
+        const newsletterChats = channels.filter(chat =>
+            chat.id?._serialized?.includes('@newsletter')
+        );
+
+        console.log(`🔍 DEBUG: Found ${newsletterChats.length} chats with @newsletter in ID`);
+
+        // Log all newsletter chats
+        newsletterChats.forEach((chat, idx) => {
+            console.log(`🔍 NEWSLETTER Chat ${idx}:`, {
                 name: chat.name,
-                id: chat.id?._serialized?.substring(0, 30),
+                id: chat.id?._serialized,
                 isGroup: chat.isGroup,
-                isNewsletter: chat.isNewsletter,
-                type: typeof chat.isNewsletter,
-                // Check all properties that might indicate it's a channel
-                allKeys: Object.keys(chat).filter(k =>
-                    k.toLowerCase().includes('news') ||
-                    k.toLowerCase().includes('channel') ||
-                    k.toLowerCase().includes('broadcast') ||
-                    k.toLowerCase().includes('newsletter')
-                )
+                isNewsletter: chat.isNewsletter
             });
         });
 
-        // Filter only newsletters/channels
+        // Filter channels using either isNewsletter property OR @newsletter in ID
         const channelList = channels
-            .filter(chat => chat.isNewsletter)
+            .filter(chat =>
+                chat.isNewsletter ||
+                chat.id?._serialized?.includes('@newsletter')
+            )
             .map(chat => ({
                 id: chat.id._serialized,
                 name: chat.name,
@@ -2116,7 +2117,7 @@ app.get('/api/channels', authenticateToken, async (req, res) => {
                 isNewsletter: true
             }));
 
-        console.log(`✅ Found ${channelList.length} channel(s) using isNewsletter filter for user ${userId}`);
+        console.log(`✅ Found ${channelList.length} channel(s) for user ${userId}`);
 
         res.json({
             success: true,
@@ -2253,26 +2254,14 @@ app.post('/api/channels/add', authenticateToken, async (req, res) => {
         // Search for the channel in user's WhatsApp
         const chats = await userClient.getChats();
 
-        // DEBUG: Log all chat types to understand what properties exist
         console.log(`🔍 DEBUG: User ${userId} has ${chats.length} total chats`);
 
-        // Log first few chats with their properties
-        const sampleChats = chats.slice(0, 5);
-        sampleChats.forEach((chat, idx) => {
-            console.log(`🔍 DEBUG Chat ${idx}:`, {
-                name: chat.name,
-                id: chat.id?._serialized,
-                isGroup: chat.isGroup,
-                isNewsletter: chat.isNewsletter,
-                type: typeof chat.isNewsletter,
-                allKeys: Object.keys(chat).filter(k => k.includes('news') || k.includes('channel') || k.includes('broadcast'))
-            });
-        });
+        // Get all channels (using @newsletter in ID or isNewsletter property)
+        const allChannels = chats.filter(chat =>
+            (chat.isNewsletter || chat.id?._serialized?.includes('@newsletter')) && chat.name
+        );
 
-        // Get all channels for better error messages
-        const allChannels = chats.filter(chat => chat.isNewsletter && chat.name);
-
-        console.log(`🔍 DEBUG: Found ${allChannels.length} channels using isNewsletter filter`);
+        console.log(`🔍 DEBUG: Found ${allChannels.length} channels for user ${userId}`);
 
         const channel = allChannels.find(chat =>
             chat.name.toLowerCase().includes(channelName.toLowerCase())
