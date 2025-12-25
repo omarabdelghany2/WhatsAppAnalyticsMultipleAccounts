@@ -5507,6 +5507,58 @@ function startAdminOnlyScheduler() {
 }
 
 // ============================================
+// AUTO-INITIALIZE AUTHENTICATED USERS
+// ============================================
+
+/**
+ * Auto-initialize WhatsApp clients for all previously authenticated users
+ * This runs on server startup to reconnect all users automatically
+ */
+async function autoInitializeAuthenticatedUsers() {
+    console.log('\n🔄 Auto-initializing WhatsApp clients for authenticated users...');
+
+    return new Promise((resolve) => {
+        db.all(`
+            SELECT DISTINCT u.id, u.username, u.email, ws.is_authenticated
+            FROM users u
+            LEFT JOIN whatsapp_sessions ws ON u.id = ws.user_id
+            WHERE ws.is_authenticated = 1
+            ORDER BY u.id
+        `, [], async (err, users) => {
+            if (err) {
+                console.error('❌ Error querying authenticated users:', err);
+                resolve();
+                return;
+            }
+
+            if (!users || users.length === 0) {
+                console.log('ℹ️  No authenticated users found. Clients will initialize when users login.');
+                resolve();
+                return;
+            }
+
+            console.log(`✅ Found ${users.length} authenticated user(s): ${users.map(u => `${u.username} (ID: ${u.id})`).join(', ')}`);
+
+            // Initialize clients sequentially with a small delay between each
+            for (const user of users) {
+                try {
+                    console.log(`\n🔧 Auto-initializing client for user ${user.username} (ID: ${user.id})...`);
+                    await initClientForUser(user.id);
+
+                    // Small delay to avoid overwhelming the system
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } catch (error) {
+                    console.error(`❌ Failed to auto-initialize client for user ${user.id}:`, error.message);
+                }
+            }
+
+            console.log('\n✅ Auto-initialization complete for all authenticated users.');
+            resolve();
+        });
+    });
+}
+
+// ============================================
 // START SERVER
 // ============================================
 
@@ -5527,8 +5579,13 @@ server.listen(PORT, '0.0.0.0', () => {
     // Start the admin-only mode scheduler
     startAdminOnlyScheduler();
 
-    // Multi-tenant mode: WhatsApp clients initialize per-user when they login
-    console.log('✅ Server ready. WhatsApp clients will initialize per user.\n');
+    // Auto-initialize WhatsApp clients for all authenticated users
+    autoInitializeAuthenticatedUsers().then(() => {
+        console.log('✅ Server ready. All authenticated users auto-initialized.\n');
+    }).catch(error => {
+        console.error('❌ Error during auto-initialization:', error);
+        console.log('✅ Server ready (with auto-init errors).\n');
+    });
 });
 
 // Graceful shutdown
