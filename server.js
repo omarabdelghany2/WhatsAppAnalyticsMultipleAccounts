@@ -2062,6 +2062,244 @@ app.get('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
     }
 });
 
+// ============================================
+// CHANNELS ENDPOINTS
+// ============================================
+
+// Get all channels user follows
+app.get('/api/channels', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const userClient = whatsappClients.get(userId);
+
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready'
+            });
+        }
+
+        console.log(`📢 Fetching channels for user ${userId}...`);
+
+        // Get all channels/newsletters
+        const channels = await userClient.getChats();
+
+        // Filter only newsletters/channels
+        const channelList = channels
+            .filter(chat => chat.isNewsletter)
+            .map(chat => ({
+                id: chat.id._serialized,
+                name: chat.name,
+                description: chat.description || '',
+                subscriberCount: chat.size || 0,
+                isNewsletter: true
+            }));
+
+        console.log(`✅ Found ${channelList.length} channel(s) for user ${userId}`);
+
+        res.json({
+            success: true,
+            channels: channelList,
+            count: channelList.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching channels:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to fetch channels'
+        });
+    }
+});
+
+// Get messages/posts from a specific channel
+app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const channelId = req.params.channelId;
+        const limit = parseInt(req.query.limit) || 50;
+
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready'
+            });
+        }
+
+        console.log(`📢 Fetching messages from channel ${channelId} for user ${userId}...`);
+
+        // Get the channel chat
+        const chat = await userClient.getChatById(channelId);
+
+        if (!chat.isNewsletter) {
+            return res.status(400).json({
+                success: false,
+                error: 'Chat is not a channel'
+            });
+        }
+
+        // Fetch messages from channel
+        const messages = await chat.fetchMessages({ limit });
+
+        // Process messages
+        const processedMessages = await Promise.all(
+            messages.map(async (msg) => {
+                try {
+                    // Determine message content
+                    let content = msg.body || '';
+                    let mediaType = 'text';
+
+                    if (msg.type === 'image') {
+                        mediaType = 'image';
+                        content = content || '[Image]';
+                    } else if (msg.type === 'video') {
+                        mediaType = 'video';
+                        content = content || '[Video]';
+                    } else if (msg.type === 'document') {
+                        mediaType = 'document';
+                        content = content || '[Document]';
+                    } else if (msg.type === 'poll' || msg.type === 'poll_creation') {
+                        mediaType = 'poll';
+                        content = msg.body || '[Poll]';
+                    }
+
+                    return {
+                        id: msg.id._serialized,
+                        channelId: channelId,
+                        channelName: chat.name,
+                        content: content,
+                        mediaType: mediaType,
+                        timestamp: msg.timestamp * 1000,
+                        hasMedia: msg.hasMedia,
+                        forwardingScore: msg.forwardingScore || 0
+                    };
+                } catch (error) {
+                    console.error('Error processing channel message:', error);
+                    return null;
+                }
+            })
+        );
+
+        // Filter out null messages
+        const validMessages = processedMessages.filter(m => m !== null);
+
+        console.log(`✅ Fetched ${validMessages.length} messages from channel ${channelId}`);
+
+        res.json({
+            success: true,
+            channelId: channelId,
+            channelName: chat.name,
+            messages: validMessages,
+            count: validMessages.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching channel messages:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to fetch channel messages'
+        });
+    }
+});
+
+// Get reactions for a specific message (works for both groups and channels)
+app.get('/api/messages/:messageId/reactions', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const messageId = req.params.messageId;
+
+        const userClient = whatsappClients.get(userId);
+        if (!userClient || !userClientReady.get(userId)) {
+            return res.status(503).json({
+                success: false,
+                error: 'WhatsApp client not ready'
+            });
+        }
+
+        console.log(`❤️ Fetching reactions for message ${messageId}...`);
+
+        // Get the message object
+        const msg = await userClient.getMessageById(messageId);
+
+        if (!msg) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message not found'
+            });
+        }
+
+        // Get reactions
+        const reactions = await msg.getReactions();
+
+        // Process reactions to include name and phone
+        const processedReactions = await Promise.all(
+            reactions.map(async (reaction) => {
+                try {
+                    // Get contact details
+                    const contact = await userClient.getContactById(reaction.senderId);
+                    const phone = (contact.id && contact.id.user) ? contact.id.user : (contact.number || reaction.senderId.split('@')[0]);
+                    const name = contact.pushname || contact.name || contact.verifiedName || phone;
+
+                    return {
+                        emoji: reaction.reaction,
+                        senderId: reaction.senderId,
+                        senderName: name,
+                        senderPhone: phone,
+                        timestamp: reaction.timestamp
+                    };
+                } catch (error) {
+                    // Fallback if contact fetch fails
+                    const phone = reaction.senderId.split('@')[0];
+                    return {
+                        emoji: reaction.reaction,
+                        senderId: reaction.senderId,
+                        senderName: phone,
+                        senderPhone: phone,
+                        timestamp: reaction.timestamp
+                    };
+                }
+            })
+        );
+
+        // Group reactions by emoji
+        const groupedReactions = {};
+        processedReactions.forEach(r => {
+            if (!groupedReactions[r.emoji]) {
+                groupedReactions[r.emoji] = [];
+            }
+            groupedReactions[r.emoji].push({
+                name: r.senderName,
+                phone: r.senderPhone,
+                timestamp: r.timestamp
+            });
+        });
+
+        // Convert to array format with counts
+        const reactionsSummary = Object.keys(groupedReactions).map(emoji => ({
+            emoji: emoji,
+            count: groupedReactions[emoji].length,
+            reactors: groupedReactions[emoji].sort((a, b) => a.name.localeCompare(b.name))
+        }));
+
+        console.log(`✅ Found ${reactions.length} reaction(s) for message ${messageId}`);
+
+        res.json({
+            success: true,
+            messageId: messageId,
+            totalReactions: reactions.length,
+            reactions: reactionsSummary
+        });
+
+    } catch (error) {
+        console.error('Error fetching reactions:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to fetch reactions'
+        });
+    }
+});
+
 // Get messages from all groups
 app.get('/api/messages', authenticateToken, (req, res) => {
     const userId = req.user.userId;

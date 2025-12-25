@@ -37,6 +37,37 @@ export interface Event {
   certificateName?: string;
 }
 
+export interface Channel {
+  id: string;
+  name: string;
+  description: string;
+  subscriberCount: number;
+  isNewsletter: boolean;
+}
+
+export interface ChannelMessage {
+  id: string;
+  channelId: string;
+  channelName: string;
+  content: string;
+  mediaType: string;
+  timestamp: number;
+  hasMedia: boolean;
+  forwardingScore: number;
+}
+
+export interface Reactor {
+  name: string;
+  phone: string;
+  timestamp: number;
+}
+
+export interface Reaction {
+  emoji: string;
+  count: number;
+  reactors: Reactor[];
+}
+
 export const api = {
   async getHealth() {
     const response = await fetch(`${API_BASE_URL}/api/health`);
@@ -481,6 +512,34 @@ export const api = {
   async deleteAdminOnlySchedule(groupId: string) {
     const response = await fetch(`${API_BASE_URL}/api/admin-only-schedule/${groupId}`, {
       method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  // ============================================
+  // CHANNELS API
+  // ============================================
+
+  // Get all channels user follows
+  async getChannels() {
+    const response = await fetch(`${API_BASE_URL}/api/channels`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  // Get messages/posts from a specific channel
+  async getChannelMessages(channelId: string, limit = 50) {
+    const response = await fetch(`${API_BASE_URL}/api/channels/${channelId}/messages?limit=${limit}`, {
+      headers: getAuthHeaders(),
+    });
+    return response.json();
+  },
+
+  // Get reactions for a specific message (works for both groups and channels)
+  async getMessageReactions(messageId: string) {
+    const response = await fetch(`${API_BASE_URL}/api/messages/${messageId}/reactions`, {
       headers: getAuthHeaders(),
     });
     return response.json();
