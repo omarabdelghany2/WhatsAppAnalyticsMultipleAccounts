@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, Video, FileText } from "lucide-react";
+import { Image as ImageIcon, Video, FileText, Heart } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { PollMessage } from "./PollMessage";
 
 interface ChannelMessage {
@@ -26,9 +28,10 @@ interface ChannelViewProps {
   onReactionClick?: (messageId: string) => void;
 }
 
-export function ChannelView({ messages, channelName, channelId }: ChannelViewProps) {
+export function ChannelView({ messages, channelName, channelId, onReactionClick }: ChannelViewProps) {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
 
   // Check if user is at bottom
   const checkIfAtBottom = () => {
@@ -97,14 +100,17 @@ export function ChannelView({ messages, channelName, channelId }: ChannelViewPro
               </div>
             ) : (
               messages.map((message) => {
+                const isHovered = hoveredMessageId === message.id;
                 return (
                   <div
                     key={message.id}
-                    className="flex gap-2 items-start justify-start"
+                    className="flex gap-2 items-start justify-start group"
+                    onMouseEnter={() => setHoveredMessageId(message.id)}
+                    onMouseLeave={() => setHoveredMessageId(null)}
                   >
 
                     {/* Message content */}
-                    <div className="max-w-[80%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground">
+                    <div className="max-w-[80%] rounded-lg p-3 shadow-sm bg-chat-received text-chat-received-foreground relative">
                       {/* Poll message */}
                       {message.mediaType === 'poll' && message.pollData ? (
                         <PollMessage pollData={message.pollData} />
@@ -124,6 +130,19 @@ export function ChannelView({ messages, channelName, channelId }: ChannelViewPro
                         )}
                       </div>
                     </div>
+
+                    {/* Reaction button - appears on hover */}
+                    {onReactionClick && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn("h-8 w-8 transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
+                        onClick={() => onReactionClick(message.id)}
+                        title="View reactions"
+                      >
+                        <Heart className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 );
               })

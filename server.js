@@ -479,6 +479,40 @@ const groupMembersCache = new Map();
 // Welcome message tracking: Map(userId_groupId -> {newMembers: [], timeoutId: number})
 const pendingWelcomeMessages = new Map();
 
+// Broadcast caching for performance optimization
+// Tracks count of pending broadcasts to avoid expensive DB queries
+const broadcastCache = {
+    pendingCount: 0,
+    lastUpdated: null,
+    needsRefresh: true
+};
+
+// Function to refresh broadcast cache from database
+function refreshBroadcastCache() {
+    db.get(`SELECT COUNT(*) as count FROM scheduled_broadcasts WHERE status = 'pending'`, (err, row) => {
+        if (!err && row) {
+            broadcastCache.pendingCount = row.count;
+            broadcastCache.lastUpdated = new Date();
+            broadcastCache.needsRefresh = false;
+            console.log(`📊 Broadcast cache refreshed: ${row.count} pending broadcasts`);
+        }
+    });
+}
+
+// Function to increment cache when broadcast is created
+function incrementBroadcastCache() {
+    broadcastCache.pendingCount++;
+    broadcastCache.lastUpdated = new Date();
+}
+
+// Function to decrement cache when broadcast is executed/cancelled
+function decrementBroadcastCache() {
+    if (broadcastCache.pendingCount > 0) {
+        broadcastCache.pendingCount--;
+    }
+    broadcastCache.lastUpdated = new Date();
+}
+
 // WebSocket clients
 const wsClients = new Set();
 
@@ -2150,7 +2184,27 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     let content = msg.body || '';
                     let mediaType = 'text';
                     let pollData = null;
-                    let reactions = []; // Reactions don't work for channel messages (return undefined)
+                    let reactions = [];
+
+                    // Try to get reactions for this message
+                    try {
+                        if (typeof msg.getReactions === 'function') {
+                            const reactionsData = await msg.getReactions();
+
+                            if (reactionsData && Array.isArray(reactionsData) && reactionsData.length > 0) {
+                                console.log(`✅ REACTIONS FOUND for message ${msg.id._serialized.substring(0, 30)}`);
+                                console.log(`   Total reactions: ${reactionsData.length}`);
+                                console.log(`   First reaction:`, JSON.stringify(reactionsData[0], null, 2).substring(0, 300));
+                                reactions = reactionsData;
+                            } else {
+                                // Empty or null - this is normal for messages without reactions
+                                // Only log if we want to debug
+                                // console.log(`No reactions for ${msg.id._serialized.substring(0, 20)}`);
+                            }
+                        }
+                    } catch (err) {
+                        console.log(`⚠️ Error calling getReactions():`, err.message);
+                    }
 
                     // Process different message types
                     if (msg.type === 'image') {
@@ -2165,39 +2219,132 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                     } else if (msg.type === 'poll' || msg.type === 'poll_creation') {
                         mediaType = 'poll';
 
-                        console.log(`📊 Processing poll message ${msg.id._serialized}, type: ${msg.type}`);
+                        console.log(`\n\n========== DEEP POLL DEBUG ==========`);
+                        console.log(`📊 Poll ID: ${msg.id._serialized.substring(0, 50)}...`);
+                        console.log(`📝 Type: ${msg.type}, Body: ${msg.body}`);
 
-                        // Try to get poll votes directly (msg.poll doesn't exist for channel polls)
-                        try {
-                            const votesRaw = await msg.getPollVotes();
-                            console.log(`🗳️  DEBUG Poll votes raw:`, JSON.stringify(votesRaw, null, 2));
+                        // Log ALL properties
+                        console.log(`\n🔍 ALL MSG PROPERTIES:`, Object.keys(msg));
 
-                            if (votesRaw && Array.isArray(votesRaw) && votesRaw.length > 0) {
-                                // Analyze votes to extract poll structure
-                                // PollVote has: voter, interractedAtTs, parentMessage, parentMsgKey
-                                const firstVote = votesRaw[0];
-                                console.log(`🔍 First vote structure:`, JSON.stringify(firstVote, null, 2));
+                        // Check msg.poll
+                        if (msg.poll) {
+                            console.log(`\n✅ msg.poll:`, JSON.stringify(msg.poll, null, 2));
+                        } else {
+                            console.log(`\n❌ msg.poll: DOES NOT EXIST`);
+                        }
 
-                                // Try to get poll options from parent message
-                                if (firstVote.parentMessage && firstVote.parentMessage.poll) {
-                                    pollData = {
-                                        pollName: firstVote.parentMessage.poll.pollName || msg.body || '[Poll]',
-                                        pollOptions: firstVote.parentMessage.poll.pollOptions || [],
-                                        votes: votesRaw
-                                    };
-                                    content = pollData.pollName;
+                        // NEW: Check for direct poll properties on message
+                        if (msg.pollOptions) {
+                            console.log(`\n🎉 FOUND IT! msg.pollOptions array length:`, msg.pollOptions.length);
+                            console.log(`\n🎉 FIRST POLL OPTION:`, JSON.stringify(msg.pollOptions[0], null, 2));
+                            if (msg.pollOptions.length > 1) {
+                                console.log(`\n🎉 SECOND POLL OPTION:`, JSON.stringify(msg.pollOptions[1], null, 2));
+                            }
+                            console.log(`\n🎉 Poll option keys:`, msg.pollOptions[0] ? Object.keys(msg.pollOptions[0]) : 'none');
+                        }
+                        if (msg.pollName) {
+                            console.log(`\n🎉 msg.pollName:`, msg.pollName);
+                        }
+                        if (msg.allowMultipleAnswers !== undefined) {
+                            console.log(`\n🎉 msg.allowMultipleAnswers:`, msg.allowMultipleAnswers);
+                        }
+
+                        // Check msg._data for poll info
+                        if (msg._data) {
+                            const pollKeys = Object.keys(msg._data).filter(k => k.toLowerCase().includes('poll'));
+                            console.log(`\n📊 Poll keys in _data:`, pollKeys);
+                            pollKeys.forEach(key => {
+                                console.log(`_data.${key}:`, JSON.stringify(msg._data[key], null, 2).substring(0, 1000));
+                            });
+                            // Dump full _data
+                            console.log(`\n📦 Full _data (5000 chars):\n${JSON.stringify(msg._data, null, 2).substring(0, 5000)}`);
+                        }
+                        console.log(`========== END POLL DEBUG ==========\n\n`);
+
+                        // FIXED: Use direct poll properties from message (channel polls don't have msg.poll)
+                        // Channel polls have pollName and pollOptions directly on the message object
+                        if (msg.pollName && msg.pollOptions) {
+                            console.log(`✅ Using direct poll properties from message`);
+
+                            // EXPERIMENTAL: Try multiple ways to get poll votes
+                            let pollVotes = [];
+                            try {
+                                // Method 1: getPollVotes()
+                                if (typeof msg.getPollVotes === 'function') {
+                                    const votesRaw = await msg.getPollVotes();
+                                    console.log(`🔬 getPollVotes():`, JSON.stringify(votesRaw, null, 2).substring(0, 300));
+                                    pollVotes = votesRaw || [];
+                                }
+
+                                // Method 2: Check _data.pollVotesSnapshot
+                                if ((!pollVotes || pollVotes.length === 0) && msg._data && msg._data.pollVotesSnapshot) {
+                                    console.log(`🔬 _data.pollVotesSnapshot:`, JSON.stringify(msg._data.pollVotesSnapshot, null, 2).substring(0, 300));
+                                    if (msg._data.pollVotesSnapshot.pollVotes) {
+                                        pollVotes = msg._data.pollVotesSnapshot.pollVotes;
+                                    }
+                                }
+
+                                // Method 3: Check if there's a votes property
+                                if ((!pollVotes || pollVotes.length === 0) && msg.votes) {
+                                    console.log(`🔬 msg.votes:`, JSON.stringify(msg.votes, null, 2).substring(0, 300));
+                                    pollVotes = msg.votes;
+                                }
+
+                                // Method 4: Check _data for any vote-related keys
+                                if ((!pollVotes || pollVotes.length === 0) && msg._data) {
+                                    const voteKeys = Object.keys(msg._data).filter(k => k.toLowerCase().includes('vote'));
+                                    if (voteKeys.length > 0) {
+                                        console.log(`🔬 Vote-related keys in _data:`, voteKeys);
+                                        voteKeys.forEach(key => {
+                                            console.log(`🔬 _data.${key}:`, JSON.stringify(msg._data[key], null, 2).substring(0, 300));
+                                        });
+                                    }
+                                }
+                            } catch (err) {
+                                console.log(`⚠️ Error getting poll votes:`, err.message);
+                            }
+
+                            pollData = {
+                                pollName: msg.pollName,
+                                pollOptions: msg.pollOptions, // Already in correct format: {name, localId}
+                                votes: pollVotes
+                            };
+                            content = msg.pollName;
+                        } else {
+                            // Fallback for regular group polls (try getPollVotes)
+                            console.log(`⚠️  No direct poll properties, trying getPollVotes()`);
+                            try {
+                                const votesRaw = await msg.getPollVotes();
+                                console.log(`🗳️  DEBUG Poll votes raw:`, JSON.stringify(votesRaw, null, 2));
+
+                                if (votesRaw && Array.isArray(votesRaw) && votesRaw.length > 0) {
+                                    const firstVote = votesRaw[0];
+                                    // Try to get poll options from parent message
+                                    if (firstVote.parentMessage && firstVote.parentMessage.poll) {
+                                        pollData = {
+                                            pollName: firstVote.parentMessage.poll.pollName || msg.body || '[Poll]',
+                                            pollOptions: firstVote.parentMessage.poll.pollOptions || [],
+                                            votes: votesRaw
+                                        };
+                                        content = pollData.pollName;
+                                    } else {
+                                        pollData = {
+                                            pollName: msg.body || '[Poll]',
+                                            pollOptions: [],
+                                            votes: votesRaw
+                                        };
+                                        content = msg.body || '[Poll]';
+                                    }
                                 } else {
-                                    // Fallback if parent message doesn't have poll data
                                     pollData = {
                                         pollName: msg.body || '[Poll]',
                                         pollOptions: [],
-                                        votes: votesRaw
+                                        votes: []
                                     };
                                     content = msg.body || '[Poll]';
                                 }
-                            } else {
-                                console.log('⚠️  No poll votes found or votes is not an array:', votesRaw);
-                                // Poll with no votes yet
+                            } catch (err) {
+                                console.error('Error getting poll votes:', err);
                                 pollData = {
                                     pollName: msg.body || '[Poll]',
                                     pollOptions: [],
@@ -2205,14 +2352,6 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
                                 };
                                 content = msg.body || '[Poll]';
                             }
-                        } catch (err) {
-                            console.error('Error getting poll votes:', err);
-                            pollData = {
-                                pollName: msg.body || '[Poll]',
-                                pollOptions: [],
-                                votes: []
-                            };
-                            content = msg.body || '[Poll]';
                         }
                     }
 
@@ -2238,14 +2377,26 @@ app.get('/api/channels/:channelId/messages', authenticateToken, async (req, res)
         // Filter out null messages
         const validMessages = processedMessages.filter(m => m !== null);
 
-        console.log(`✅ Fetched ${validMessages.length} messages from channel ${channelId}`);
+        // Deduplicate messages by ID (fix React duplicate key warning)
+        const uniqueMessages = [];
+        const seenIds = new Set();
+        for (const msg of validMessages) {
+            if (!seenIds.has(msg.id)) {
+                seenIds.add(msg.id);
+                uniqueMessages.push(msg);
+            } else {
+                console.log(`⚠️  Skipped duplicate message: ${msg.id}`);
+            }
+        }
+
+        console.log(`✅ Fetched ${uniqueMessages.length} unique messages from channel ${channelId} (${validMessages.length - uniqueMessages.length} duplicates removed)`);
 
         res.json({
             success: true,
             channelId: channelId,
             channelName: chat.name,
-            messages: validMessages,
-            count: validMessages.length
+            messages: uniqueMessages,
+            count: uniqueMessages.length
         });
 
     } catch (error) {
@@ -2976,6 +3127,10 @@ app.post('/api/messages/broadcast/schedule', authenticateToken, upload.single('f
             }
 
             console.log(`📅 Broadcast scheduled for ${scheduledDate.toISOString()} (ID: ${this.lastID})`);
+
+            // OPTIMIZATION: Increment cache to avoid unnecessary DB queries
+            incrementBroadcastCache();
+
             res.json({
                 success: true,
                 scheduleId: this.lastID,
@@ -3087,6 +3242,10 @@ app.delete('/api/messages/broadcast/scheduled/:id', authenticateToken, (req, res
             }
 
             console.log(`🗑️ Scheduled broadcast ${scheduleId} cancelled by user ${userId}`);
+
+            // OPTIMIZATION: Decrement cache since broadcast was cancelled
+            decrementBroadcastCache();
+
             res.json({
                 success: true,
                 message: 'Scheduled broadcast cancelled successfully'
@@ -5545,8 +5704,27 @@ async function executeScheduledBroadcast(broadcast) {
     }
 }
 
-// Check for scheduled broadcasts every minute
+// Check for scheduled broadcasts every minute (OPTIMIZED WITH SMART CACHING)
 schedule.scheduleJob('* * * * *', async () => {
+    // OPTIMIZATION: Quick check - are there ANY pending broadcasts?
+    // This avoids expensive database query 99% of the time
+    if (broadcastCache.pendingCount === 0 && !broadcastCache.needsRefresh) {
+        // No pending broadcasts - skip expensive query!
+        return;
+    }
+
+    // Refresh cache every 5 minutes to ensure accuracy
+    const cacheAge = broadcastCache.lastUpdated ? (Date.now() - broadcastCache.lastUpdated.getTime()) / 1000 : 999999;
+    if (cacheAge > 300 || broadcastCache.needsRefresh) { // 5 minutes
+        refreshBroadcastCache();
+    }
+
+    // If cache says 0, trust it (unless it needs refresh)
+    if (broadcastCache.pendingCount === 0) {
+        return;
+    }
+
+    // Cache indicates pending broadcasts exist - run full query
     const now = new Date().toISOString();
 
     db.all(`
@@ -5571,6 +5749,9 @@ schedule.scheduleJob('* * * * *', async () => {
                     SET status = 'executing'
                     WHERE id = ?
                 `, [broadcast.id]);
+
+                // Decrement cache since broadcast is being executed
+                decrementBroadcastCache();
 
                 // Execute in background (don't await to allow parallel execution)
                 executeScheduledBroadcast(broadcast).catch(err => {
@@ -5673,12 +5854,14 @@ function startAdminOnlyScheduler() {
     // Check immediately on start
     checkAndApplyAdminOnlySchedules();
 
-    // Then check every minute
+    // OPTIMIZATION: Check every 5 minutes instead of every minute
+    // Admin-only mode doesn't need second-by-second precision
+    // This reduces CPU usage by 80% for this scheduler
     adminOnlySchedulerInterval = setInterval(() => {
         checkAndApplyAdminOnlySchedules();
-    }, 60 * 1000); // 60 seconds
+    }, 5 * 60 * 1000); // 5 minutes (was 60 seconds)
 
-    console.log('⏰ Admin-only mode scheduler started (checks every minute)');
+    console.log('⏰ Admin-only mode scheduler started (checks every 5 minutes)');
 }
 
 // ============================================
@@ -5750,6 +5933,9 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  GET  /api/events/:groupId - Get events from specific group`);
     console.log(`  GET  /api/search?q=query - Search messages`);
     console.log(`  GET  /api/stats - Get statistics\n`);
+
+    // Initialize broadcast cache on startup
+    refreshBroadcastCache();
 
     // Start the admin-only mode scheduler
     startAdminOnlyScheduler();
