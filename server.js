@@ -5854,14 +5854,12 @@ function startAdminOnlyScheduler() {
     // Check immediately on start
     checkAndApplyAdminOnlySchedules();
 
-    // OPTIMIZATION: Check every 5 minutes instead of every minute
-    // Admin-only mode doesn't need second-by-second precision
-    // This reduces CPU usage by 80% for this scheduler
+    // Check every minute for precise schedule execution
     adminOnlySchedulerInterval = setInterval(() => {
         checkAndApplyAdminOnlySchedules();
-    }, 5 * 60 * 1000); // 5 minutes (was 60 seconds)
+    }, 60 * 1000); // 1 minute
 
-    console.log('⏰ Admin-only mode scheduler started (checks every 5 minutes)');
+    console.log('⏰ Admin-only mode scheduler started (checks every minute)');
 }
 
 // ============================================
